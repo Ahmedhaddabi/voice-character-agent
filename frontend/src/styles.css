@@ -1,0 +1,210 @@
+:root {
+  --bg: #201720;
+  --stage: #2b1f28;
+  --surface: #352533;
+  --line: #4a3646;
+  --text: #f2e8e6;
+  --muted: #a8949c;
+  --brass: #c89b5a;
+  --teal: #3f9a8e;
+  --rose: #b8455e;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter Tight', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bar__name {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.pill--live .dot { background: var(--teal); }
+.pill--speaking .dot { background: var(--brass); }
+.pill--speaking { color: var(--brass); border-color: var(--brass); }
+.pill--error .dot { background: var(--rose); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .pill--live .dot { animation: breathe 2.4s ease-in-out infinite; }
+}
+
+@keyframes breathe { 50% { opacity: 0.35; } }
+
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  min-height: 0;
+}
+
+.stage {
+  position: relative;
+  background: var(--stage);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 440px;
+  transition: border-color 0.4s ease;
+}
+
+.stage--speaking { border-color: var(--brass); }
+.stage--drop { border-color: var(--teal); border-style: dashed; }
+
+.stage__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stage__hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.side__log {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  min-height: 200px;
+}
+
+.side__empty { margin: 0; color: var(--muted); font-size: 13px; }
+
+.line { margin: 0 0 14px; font-size: 14px; }
+.line:last-child { margin-bottom: 0; }
+
+.line__who {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.line--assistant .line__who { color: var(--brass); }
+
+.side__debug {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.side__label {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+.chip {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover { border-color: var(--brass); color: var(--brass); }
+
+.controls { display: flex; gap: 10px; justify-content: center; }
+
+.btn {
+  border-radius: var(--radius);
+  padding: 12px 26px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.2s ease;
+}
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn--go { background: var(--brass); color: #2a1d10; }
+.btn--ghost { background: transparent; border-color: var(--line); color: var(--text); }
+.btn--end { background: transparent; border-color: var(--rose); color: var(--rose); }
+.btn:not(:disabled):hover { opacity: 0.85; }
+
+.error {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--rose);
+  border-radius: var(--radius);
+  color: var(--rose);
+  font-size: 13px;
+}
+
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+@media (max-width: 820px) {
+  .main { grid-template-columns: 1fr; }
+  .stage { min-height: 340px; }
+}
