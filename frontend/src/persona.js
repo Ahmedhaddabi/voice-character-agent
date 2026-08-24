@@ -5,7 +5,7 @@
 // nudge the model almost never calls the animation tools, and a character who
 // stands perfectly still while talking reads as broken.
 
-export const CHARACTER_NAME = 'Layla';
+export const CHARACTER_NAME = 'Tazima';
 
 export const PERSONA = `
 You are ${CHARACTER_NAME}, a warm and curious character who talks with people

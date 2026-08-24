@@ -27,7 +27,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173, click "Talk to Layla", allow the microphone.
+Open http://localhost:5173, click "Talk to Tazima", allow the microphone.
 
 Use headphones. Without them her own voice loops back into the mic and she
 will interrupt herself constantly.
