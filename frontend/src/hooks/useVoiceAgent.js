@@ -44,6 +44,8 @@ export function useVoiceAgent(controller) {
 
   const startLoop = useCallback(() => {
     let last = performance.now();
+    let attachLogged = false;
+    let sampleCount = 0;
     const step = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -51,9 +53,20 @@ export function useVoiceAgent(controller) {
       // The remote stream appears on the audio element shortly after connect.
       const lip = lipSyncRef.current;
       const el = audioElRef.current;
-      if (lip && el?.srcObject && !lip.analyser) lip.attach(el.srcObject);
+      if (lip && el?.srcObject && !lip.analyser) {
+        const attached = lip.attach(el.srcObject);
+        if (attached && !attachLogged) {
+          attachLogged = true;
+          console.log('Lip-sync attached to remote audio track. Playing:', !el.paused, 'muted:', el.muted);
+        }
+      }
 
-      controller.pushAmplitude(lip ? lip.read() : 0, dt);
+      const level = lip ? lip.read() : 0;
+      if (lip?.analyser && sampleCount < 8) {
+        sampleCount++;
+        console.log(`Mouth amplitude sample ${sampleCount}:`, level.toFixed(3));
+      }
+      controller.pushAmplitude(level, dt);
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
@@ -76,6 +89,13 @@ export function useVoiceAgent(controller) {
       audioEl.style.display = 'none';
       document.body.appendChild(audioEl);
       audioElRef.current = audioEl;
+      // Autoplay can silently fail (browser policy) well after the click that
+      // started connect() — if it does, the element never actually plays, and
+      // the lip-sync tap reads silence forever even though voice audio exists
+      // on the track. Surface that instead of failing quietly.
+      audioEl.addEventListener('loadedmetadata', () => {
+        audioEl.play()?.catch((err) => console.error('Audio element autoplay was blocked:', err));
+      });
 
       // Ask the browser to clean up the mic signal before it ever reaches
       // OpenAI — cuts down on room echo and steady background noise (fans,
