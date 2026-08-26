@@ -309,7 +309,10 @@ export class Stage {
     // 0.4 rad on the upper arm the sleeve visibly fractures. POSES was tuned
     // for a VRM rig's full range of motion, so its values are scaled way down
     // here to stay inside what this specific rig's weighting can carry.
-    const ARM_SCALE = 0.15;
+    // 0.15 kept it perfectly clean but read as no movement at all; 0.25 still
+    // stays under the ~0.4 rad fracture point on the largest gesture peaks
+    // while actually being visible.
+    const ARM_SCALE = 0.25;
     const addRot = (name, rot) => {
       const node = b[name];
       const r = rest[name];
@@ -338,9 +341,21 @@ export class Stage {
       spine.quaternion.copy(rest.Spine).multiply(delta);
     }
 
+    // c.mouth is already smoothed upstream, but it can still swing from 0 to
+    // ~1 within a couple of frames on a loud syllable. Applied raw, this
+    // shape key reads as a hard binary snap rather than talking — the VRM
+    // path avoids this by blending several visemes at partial weight (max
+    // 0.85 on 'aa'), but this rig only has the one shape key. So: cap the
+    // peak (a full 1.0 pull is a much more extreme jaw drop than it looks
+    // like at 0.7) and smooth its own approach on top of the existing
+    // amplitude smoothing, for a softer, less mechanical mouth.
     const mesh = this.riggedMesh;
     const idx = mesh.morphTargetDictionary?.MouthOpen;
-    if (idx !== undefined) mesh.morphTargetInfluences[idx] = c.mouth;
+    if (idx !== undefined) {
+      const target = Math.min(0.7, c.mouth);
+      this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, target, 0.3);
+      mesh.morphTargetInfluences[idx] = this._mouthSmoothed;
+    }
   }
 
   applyToPlaceholder(pose) {
