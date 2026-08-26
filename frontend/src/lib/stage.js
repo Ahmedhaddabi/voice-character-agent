@@ -384,11 +384,19 @@ export class Stage {
     // ~1 within a couple of frames on a loud syllable. Applied raw, this
     // shape key reads as a hard binary snap rather than talking — the VRM
     // path avoids this by blending several visemes at partial weight (max
-    // 0.85 on 'aa'), but this rig only has the one shape key. So: cap the
-    // peak (a full 1.0 pull is a much more extreme jaw drop than it looks
-    // like at 0.7) and smooth its own approach on top of the existing
-    // amplitude smoothing, for a softer, less mechanical mouth.
-    const target = Math.min(0.7, c.mouth);
+    // 0.85 on 'aa'), but this rig only has the one shape key. So: smooth its
+    // own approach on top of the existing amplitude smoothing, for a softer,
+    // less mechanical mouth.
+    //
+    // The earlier 0.7 cap here was based on a wrong assumption — the shape
+    // key's own pull was checked directly in Blender (2026-08-26) and is
+    // barely visible even at a full 1.0 weight (the mesh has no real mouth
+    // cavity, just a shallow lower-lip recess), so capping it below 1.0 only
+    // made an already-subtle motion smaller. The shape key itself has been
+    // rebuilt with ~1.6x its original pull and the cap removed; the full
+    // 0-1 range is small even now, so don't reintroduce a cap without
+    // re-checking in Blender that it isn't just hiding the same problem.
+    const target = c.mouth;
     this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, target, 0.3);
     // The mesh can be split across multiple primitives (multiple materials),
     // each with its own copy of the morph target — drive every one that has it.
