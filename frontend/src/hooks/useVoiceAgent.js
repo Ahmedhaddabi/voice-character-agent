@@ -17,6 +17,7 @@ export function useVoiceAgent(controller) {
   const audioElRef = useRef(null);
   const lipSyncRef = useRef(null);
   const rafRef = useRef(null);
+  const micStreamRef = useRef(null);
 
   // The animation tools run entirely in the browser. Nothing round-trips to a
   // server, so the character reacts the moment the model decides to move.
@@ -76,6 +77,14 @@ export function useVoiceAgent(controller) {
       document.body.appendChild(audioEl);
       audioElRef.current = audioEl;
 
+      // Ask the browser to clean up the mic signal before it ever reaches
+      // OpenAI — cuts down on room echo and steady background noise (fans,
+      // traffic) picked up alongside the person's voice.
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      micStreamRef.current = micStream;
+
       const agent = new RealtimeAgent({
         name: CHARACTER_NAME,
         instructions: PERSONA,
@@ -84,16 +93,25 @@ export function useVoiceAgent(controller) {
 
       const session = new RealtimeSession(agent, {
         model,
-        transport: new OpenAIRealtimeWebRTC({ audioElement: audioEl }),
+        transport: new OpenAIRealtimeWebRTC({ audioElement: audioEl, mediaStream: micStream }),
         config: {
           audio: {
-            input: { turnDetection: { type: 'semantic_vad', eagerness: 'medium' } },
+            input: {
+              turnDetection: { type: 'semantic_vad', eagerness: 'medium' },
+              // Server-side noise reduction tuned for a single speaker close
+              // to the mic, so it suppresses other voices/noise further away
+              // (the "listening to background conversations" problem).
+              noiseReduction: { type: 'near_field' },
+            },
           },
         },
       });
 
       session.on('audio_interrupted', () => controller.interrupt());
-      session.on('error', (e) => setError(e?.error?.message ?? 'The session hit an error.'));
+      session.on('error', (e) => {
+        console.error('Realtime session error:', e);
+        setError(e?.error?.message ?? 'The session hit an error.');
+      });
       session.on('history_updated', (history) => {
         setTranscript(
           history
@@ -118,6 +136,9 @@ export function useVoiceAgent(controller) {
       setStatus('live');
       startLoop();
     } catch (err) {
+      console.error('Failed to connect:', err);
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
       setError(err.message ?? String(err));
       setStatus('error');
     }
@@ -132,6 +153,8 @@ export function useVoiceAgent(controller) {
     lipSyncRef.current = null;
     audioElRef.current?.remove();
     audioElRef.current = null;
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
     controller.interrupt();
     controller.setListening(false);
     setStatus('idle');
