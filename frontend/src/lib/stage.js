@@ -159,7 +159,7 @@ export class Stage {
 
   clearRig() {
     if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
-    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; }
+    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; this.mouthDark = null; }
     if (this.staticModel) { this.scene.remove(this.staticModel); this.staticModel = null; }
     if (this.placeholder) { this.scene.remove(this.placeholder.root); this.placeholder = null; }
   }
@@ -190,9 +190,15 @@ export class Stage {
     // Collect all of them so nothing gets silently left un-animated.
     const skinnedMeshes = [];
     const bones = {};
+    let mouthDark = null;
     gltf.scene.traverse((o) => {
       if (o.isSkinnedMesh) skinnedMeshes.push(o);
       if (o.isBone) bones[o.name] = o;
+      // A small static "teeth bar" mesh tucked behind the lips (see
+      // applyToRigged below) — it never moves on its own, it just fades in
+      // as the jaw opens, so the closed-mouth look never depends on getting
+      // its physical depth relative to the lips exactly right.
+      if (o.name === 'MouthDark') mouthDark = o;
     });
 
     if (skinnedMeshes.length) {
@@ -200,6 +206,25 @@ export class Stage {
       this.riggedScene = gltf.scene;
       this.riggedMeshes = skinnedMeshes;
       this.bones = bones;
+      this.mouthDark = mouthDark;
+      if (this.mouthDark) {
+        const mat = this.mouthDark.material;
+        // The lower-lip shape key only recedes the skin by a centimetre or
+        // two, so relying on the depth buffer to hide this object behind
+        // closed lips and reveal it behind an open mouth is fragile (it was
+        // tried in Blender first and kept poking through at rest or staying
+        // hidden when open, depending on the mesh's own curvature at any
+        // given point). Disabling depth testing and driving pure opacity
+        // from the same mouth-open value sidesteps that entirely: at
+        // opacity 0 it is invisible regardless of what's in front of it, and
+        // when it fades in it always draws on top, so it reads correctly no
+        // matter how the jaw shape key is tuned later.
+        mat.transparent = true;
+        mat.depthTest = false;
+        mat.depthWrite = false;
+        mat.opacity = 0;
+        this.mouthDark.renderOrder = 999;
+      }
       // Bone orientations here are not normalized like a VRM rig: her arms
       // rest at her sides, a compound rotation on every axis, not identity.
       // Capture each bone's authored rest orientation as a quaternion so
@@ -371,6 +396,9 @@ export class Stage {
       const idx = mesh.morphTargetDictionary?.MouthOpen;
       if (idx !== undefined) mesh.morphTargetInfluences[idx] = this._mouthSmoothed;
     }
+    // Same smoothed value drives the hidden "teeth bar" — see the comment in
+    // loadModel(). It fades in exactly as fast as the jaw appears to drop.
+    if (this.mouthDark) this.mouthDark.material.opacity = this._mouthSmoothed;
   }
 
   applyToPlaceholder(pose) {
