@@ -159,7 +159,7 @@ export class Stage {
 
   clearRig() {
     if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
-    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMesh = null; this.bones = null; this.restRot = null; }
+    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; }
     if (this.staticModel) { this.scene.remove(this.staticModel); this.staticModel = null; }
     if (this.placeholder) { this.scene.remove(this.placeholder.root); this.placeholder = null; }
   }
@@ -184,17 +184,21 @@ export class Stage {
       return 'vrm';
     }
 
-    let skinned = null;
+    // A single mesh can be split into multiple primitives (e.g. one per
+    // material) — that means multiple SkinnedMesh objects sharing one
+    // skeleton, each potentially carrying its own copy of a morph target.
+    // Collect all of them so nothing gets silently left un-animated.
+    const skinnedMeshes = [];
     const bones = {};
     gltf.scene.traverse((o) => {
-      if (o.isSkinnedMesh && !skinned) skinned = o;
+      if (o.isSkinnedMesh) skinnedMeshes.push(o);
       if (o.isBone) bones[o.name] = o;
     });
 
-    if (skinned) {
+    if (skinnedMeshes.length) {
       this.clearRig();
       this.riggedScene = gltf.scene;
-      this.riggedMesh = skinned;
+      this.riggedMeshes = skinnedMeshes;
       this.bones = bones;
       // Bone orientations here are not normalized like a VRM rig: her arms
       // rest at her sides, a compound rotation on every axis, not identity.
@@ -305,14 +309,13 @@ export class Stage {
     // amount", so it silently produced no visible movement.
     //
     // ARM_SCALE exists because this mesh is hand-weighted, not professionally
-    // weight-painted (see the notes that shipped with TAZ.glb): past roughly
-    // 0.4 rad on the upper arm the sleeve visibly fractures. POSES was tuned
-    // for a VRM rig's full range of motion, so its values are scaled way down
-    // here to stay inside what this specific rig's weighting can carry.
-    // 0.15 kept it perfectly clean but read as no movement at all; 0.25 still
-    // stays under the ~0.4 rad fracture point on the largest gesture peaks
-    // while actually being visible.
-    const ARM_SCALE = 0.25;
+    // weight-painted. POSES was tuned for a VRM rig's full range of motion,
+    // so its values are scaled way down here to stay inside what this rig's
+    // weighting can carry. As of the 2026-08-26 TAZ.glb re-export, even 0.2
+    // rad (~11 deg) on the upper arm visibly streaks the sleeve at the cuff —
+    // tighter tolerance than the previous export had, not looser — so this is
+    // deliberately conservative until the weight painting is revisited.
+    const ARM_SCALE = 0.08;
     const addRot = (name, rot) => {
       const node = b[name];
       const r = rest[name];
@@ -349,12 +352,13 @@ export class Stage {
     // peak (a full 1.0 pull is a much more extreme jaw drop than it looks
     // like at 0.7) and smooth its own approach on top of the existing
     // amplitude smoothing, for a softer, less mechanical mouth.
-    const mesh = this.riggedMesh;
-    const idx = mesh.morphTargetDictionary?.MouthOpen;
-    if (idx !== undefined) {
-      const target = Math.min(0.7, c.mouth);
-      this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, target, 0.3);
-      mesh.morphTargetInfluences[idx] = this._mouthSmoothed;
+    const target = Math.min(0.7, c.mouth);
+    this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, target, 0.3);
+    // The mesh can be split across multiple primitives (multiple materials),
+    // each with its own copy of the morph target — drive every one that has it.
+    for (const mesh of this.riggedMeshes) {
+      const idx = mesh.morphTargetDictionary?.MouthOpen;
+      if (idx !== undefined) mesh.morphTargetInfluences[idx] = this._mouthSmoothed;
     }
   }
 
@@ -397,7 +401,7 @@ export class Stage {
     const pose = this.currentPose(t);
 
     if (this.vrm) this.applyToVRM(pose, dt);
-    else if (this.riggedMesh) this.applyToRigged(pose);
+    else if (this.riggedMeshes) this.applyToRigged(pose);
     else if (this.staticModel) this.applyToStatic(t);
     else if (this.placeholder) this.applyToPlaceholder(pose);
 
