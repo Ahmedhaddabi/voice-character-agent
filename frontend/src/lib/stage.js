@@ -308,19 +308,30 @@ export class Stage {
     // components on top of that does not correspond to "rotate an extra
     // amount", so it silently produced no visible movement.
     //
-    // ARM_SCALE exists because this mesh is hand-weighted, not professionally
-    // weight-painted. POSES was tuned for a VRM rig's full range of motion,
-    // so its values are scaled way down here to stay inside what this rig's
-    // weighting can carry. As of the 2026-08-26 TAZ.glb re-export, even 0.2
-    // rad (~11 deg) on the upper arm visibly streaks the sleeve at the cuff —
-    // tighter tolerance than the previous export had, not looser — so this is
-    // deliberately conservative until the weight painting is revisited.
-    const ARM_SCALE = 0.08;
+    // The "sleeve streaks at the cuff" symptom previously blamed on rough
+    // weight painting was actually a wrong-axis bug, confirmed by extracting
+    // the exported rig's own rest/posed joint quaternions (2026-08-26
+    // TAZ.glb) and checking which local axis a known-good bend (Blender's
+    // own baked wave — a clean, natural arm raise, no streaking) rotates
+    // around: it's local X, not Z. POSES.wave/shrug/point/think/celebrate
+    // put their bend value in rUpper[2]/rLower[2] (index 2, "Z") because they
+    // were written for a VRM-normalized humanoid bone space, a different
+    // skeleton convention from this hand-rigged one. Feeding that Z-slot
+    // value straight into this rig's Euler Z rotated the forearm mostly
+    // around its own roll/twist axis instead of bending it — that twist
+    // against the cloth is what read as streaking, not fragile weighting.
+    // Remapping index 2 -> local X (the verified bend axis) fixes the actual
+    // rotation direction. Verified in Blender up to POSES' full combined
+    // peak (~150 deg shoulder+elbow) with no mesh damage, but that peak
+    // reads as a fairly exaggerated swing on this character's proportions,
+    // so ARM_SCALE is set to a visibly large-but-not-maxed value rather than
+    // 1.0 — nudge it once you've seen it live.
+    const ARM_SCALE = 0.6;
     const addRot = (name, rot) => {
       const node = b[name];
       const r = rest[name];
       if (!node || !r || !rot) return;
-      euler.set(rot[0] * ARM_SCALE, rot[1] * ARM_SCALE, rot[2] * ARM_SCALE);
+      euler.set(rot[2] * ARM_SCALE, rot[0] * ARM_SCALE, rot[1] * ARM_SCALE);
       delta.setFromEuler(euler);
       node.quaternion.copy(r).multiply(delta);
     };
