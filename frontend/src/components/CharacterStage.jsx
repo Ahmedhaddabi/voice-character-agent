@@ -20,10 +20,20 @@ export default function CharacterStage({ controller, speaking }) {
     stageRef.current = stage;
 
     // Whatever sits in public/ loads on open. A rigged VRM wins if both exist.
+    //
+    // Files under public/ keep the same filename across every build (Vite
+    // only content-hashes files it processes as JS/CSS imports), so a CDN or
+    // the phone's own browser can keep serving a stale character.glb for a
+    // long time after a real redeploy — we were chasing "fixes" that were
+    // already live but never actually reaching the device under test. A
+    // cache-busting query string forces a fresh fetch every load while this
+    // file is still changing release to release; swap in a real content hash
+    // once the model has stabilized and caching is worth having back.
+    const cacheBust = `?v=${Date.now()}`;
     (async () => {
       for (const url of ['/character.vrm', '/character.glb']) {
         try {
-          setRig(await stage.loadModel(url));
+          setRig(await stage.loadModel(url + cacheBust));
           return;
         } catch { /* try the next one */ }
       }
