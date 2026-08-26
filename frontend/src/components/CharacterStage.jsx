@@ -4,6 +4,7 @@ import { Stage } from '../lib/stage';
 const RIG_NOTE = {
   placeholder: 'Placeholder figure — drop a .glb or .vrm here to use your character',
   static: 'Your model is loaded but has no skeleton, so only breathing and sway are active',
+  rigged: null,
   vrm: null,
 };
 

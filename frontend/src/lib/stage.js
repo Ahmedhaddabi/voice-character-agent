@@ -38,6 +38,30 @@ const EMOTION_TINT = {
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
+const TARGET_HEIGHT = 1.65;
+
+// Every character we load was exported by a different tool with its own
+// notion of scale and pivot (the original generator, a from-scratch Blender
+// rig, a future one). Rather than trust each export, measure the loaded
+// scene's actual bounding box and normalize it: feet at y=0, centered on
+// x/z, scaled to a consistent height. Without this, anything that was not
+// authored at exactly "1.6m tall, feet at origin" renders off-screen.
+function frameModel(object) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (!isFinite(box.min.y)) return; // empty geometry, nothing to frame
+
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+
+  const scale = size.y > 0 ? TARGET_HEIGHT / size.y : 1;
+  object.scale.setScalar(scale);
+  object.position.x -= center.x * scale;
+  object.position.z -= center.z * scale;
+  object.position.y -= box.min.y * scale;
+}
+
 export class Stage {
   constructor(canvas, controller) {
     this.controller = controller;
@@ -135,12 +159,14 @@ export class Stage {
 
   clearRig() {
     if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
+    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMesh = null; this.bones = null; this.restRot = null; }
     if (this.staticModel) { this.scene.remove(this.staticModel); this.staticModel = null; }
     if (this.placeholder) { this.scene.remove(this.placeholder.root); this.placeholder = null; }
   }
 
-  // Handles both a rigged VRM and a plain GLB. Returns which one it found, so
-  // the UI can say honestly what will and will not move.
+  // Handles a VRM, a plain GLB rigged by hand (skeleton + morph targets but no
+  // VRM humanoid metadata), and a fully static GLB. Returns which one it
+  // found, so the UI can say honestly what will and will not move.
   async loadModel(url) {
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -154,13 +180,41 @@ export class Stage {
       this.clearRig();
       this.vrm = vrm;
       this.scene.add(vrm.scene);
+      frameModel(vrm.scene);
       return 'vrm';
+    }
+
+    let skinned = null;
+    const bones = {};
+    gltf.scene.traverse((o) => {
+      if (o.isSkinnedMesh && !skinned) skinned = o;
+      if (o.isBone) bones[o.name] = o;
+    });
+
+    if (skinned) {
+      this.clearRig();
+      this.riggedScene = gltf.scene;
+      this.riggedMesh = skinned;
+      this.bones = bones;
+      // Bone orientations here are not normalized like a VRM rig: her arms
+      // rest at her sides, a compound rotation on every axis, not identity.
+      // Capture each bone's authored rest orientation as a quaternion so
+      // gesture offsets can be composed on top of it (quaternion multiply)
+      // instead of overwritten as raw Euler angles, which would silently
+      // no-op against a non-trivial rest pose.
+      this.restRot = {};
+      for (const name of Object.keys(bones)) this.restRot[name] = bones[name].quaternion.clone();
+      this.scene.add(gltf.scene);
+      frameModel(gltf.scene);
+      return 'rigged';
     }
 
     // No skeleton and no blendshapes: she can stand and breathe, nothing more.
     this.clearRig();
     this.staticModel = gltf.scene;
     this.scene.add(gltf.scene);
+    frameModel(gltf.scene);
+    this.staticBaseY = gltf.scene.position.y;
     return 'static';
   }
 
@@ -233,6 +287,62 @@ export class Stage {
     vrm.update(dt);
   }
 
+  // A hand-rigged GLB: real bones, but authored with whatever rest rotation
+  // Blender happened to save (arms hanging at her sides, not a T-pose), so
+  // every gesture offset gets added onto that rest rotation rather than
+  // overwriting it outright.
+  applyToRigged(pose) {
+    const c = this.controller;
+    const b = this.bones;
+    const rest = this.restRot;
+    const euler = this._scratchEuler ?? (this._scratchEuler = new THREE.Euler());
+    const delta = this._scratchQuat ?? (this._scratchQuat = new THREE.Quaternion());
+
+    // Compose the gesture offset onto the bone's own rest orientation via
+    // quaternion multiply, not raw Euler addition — the rest pose here is a
+    // compound rotation (arms angled down at her sides), and adding Euler
+    // components on top of that does not correspond to "rotate an extra
+    // amount", so it silently produced no visible movement.
+    //
+    // ARM_SCALE exists because this mesh is hand-weighted, not professionally
+    // weight-painted (see the notes that shipped with TAZ.glb): past roughly
+    // 0.4 rad on the upper arm the sleeve visibly fractures. POSES was tuned
+    // for a VRM rig's full range of motion, so its values are scaled way down
+    // here to stay inside what this specific rig's weighting can carry.
+    const ARM_SCALE = 0.15;
+    const addRot = (name, rot) => {
+      const node = b[name];
+      const r = rest[name];
+      if (!node || !r || !rot) return;
+      euler.set(rot[0] * ARM_SCALE, rot[1] * ARM_SCALE, rot[2] * ARM_SCALE);
+      delta.setFromEuler(euler);
+      node.quaternion.copy(r).multiply(delta);
+    };
+    // GLTFLoader strips '.' from node names (it uses '.' as the separator in
+    // animation track paths), so "UpperArm.R" in the file becomes "UpperArmR".
+    addRot('UpperArmR', pose.rUpper);
+    addRot('UpperArmL', pose.lUpper);
+    addRot('ForeArmR', pose.rLower);
+    addRot('ForeArmL', pose.lLower);
+
+    const head = b.Head;
+    if (head) {
+      euler.set(pose.headX ?? 0, pose.headY ?? 0, 0);
+      delta.setFromEuler(euler);
+      head.quaternion.copy(rest.Head).multiply(delta);
+    }
+    const spine = b.Spine;
+    if (spine) {
+      euler.set(0, pose.spineY ?? 0, 0);
+      delta.setFromEuler(euler);
+      spine.quaternion.copy(rest.Spine).multiply(delta);
+    }
+
+    const mesh = this.riggedMesh;
+    const idx = mesh.morphTargetDictionary?.MouthOpen;
+    if (idx !== undefined) mesh.morphTargetInfluences[idx] = c.mouth;
+  }
+
   applyToPlaceholder(pose) {
     const c = this.controller;
     const p = this.placeholder;
@@ -259,7 +369,7 @@ export class Stage {
   applyToStatic(t) {
     const c = this.controller;
     const m = this.staticModel;
-    m.position.y = Math.sin(t * 1.5) * 0.006 + (c.speaking ? Math.sin(t * 7) * 0.004 : 0);
+    m.position.y = this.staticBaseY + Math.sin(t * 1.5) * 0.006 + (c.speaking ? Math.sin(t * 7) * 0.004 : 0);
     m.rotation.y = Math.sin(t * 0.4) * 0.07 + (c.speaking ? Math.sin(t * 2.3) * 0.03 : 0);
     const lean = c.speaking ? 0.012 : 0;
     m.rotation.x += ((Math.sin(t * 1.1) * 0.008 + lean) - m.rotation.x) * 0.05;
@@ -272,6 +382,7 @@ export class Stage {
     const pose = this.currentPose(t);
 
     if (this.vrm) this.applyToVRM(pose, dt);
+    else if (this.riggedMesh) this.applyToRigged(pose);
     else if (this.staticModel) this.applyToStatic(t);
     else if (this.placeholder) this.applyToPlaceholder(pose);
 
