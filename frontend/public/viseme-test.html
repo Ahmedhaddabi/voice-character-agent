@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Viseme test</title>
+<style>
+  :root { --bg:#201720; --surface:#352533; --line:#4a3646; --text:#f2e8e6;
+          --muted:#a8949c; --brass:#c89b5a; --teal:#3f9a8e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); min-height:100vh;
+         font-family:'Inter Tight',system-ui,sans-serif; font-size:14px;
+         display:flex; flex-direction:column; align-items:center; padding:24px; gap:18px; }
+  h1 { font-size:17px; font-weight:500; margin:0; }
+  p.sub { color:var(--muted); font-size:13px; margin:0; max-width:520px; text-align:center; }
+  #stage { width:min(420px,90vw); aspect-ratio:1; background:var(--surface);
+           border:1px solid var(--line); border-radius:16px; display:grid;
+           place-items:center; overflow:hidden; }
+  #mouth { max-width:64%; max-height:64%; image-rendering:auto; }
+  #label { font-size:26px; letter-spacing:.06em; color:var(--brass); min-height:34px; font-weight:500; }
+  #meter { width:min(420px,90vw); height:5px; background:var(--line); border-radius:3px; overflow:hidden; }
+  #fill { height:100%; width:0%; background:var(--teal); transition:width .05s linear; }
+  button { background:var(--brass); border:none; border-radius:10px; color:#2a1d10;
+           padding:12px 28px; font:inherit; font-weight:500; cursor:pointer; }
+  button.off { background:transparent; border:1px solid var(--line); color:var(--text); }
+  .grid { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; max-width:560px; }
+  .grid span { border:1px solid var(--line); border-radius:999px; padding:3px 11px;
+               font-size:12px; color:var(--muted); }
+  .grid span.on { border-color:var(--brass); color:var(--brass); }
+  #err { color:#b8455e; font-size:13px; max-width:520px; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>Viseme test</h1>
+  <p class="sub">Speak into your microphone. The mouth shape is chosen from the
+    audio spectrum, the same way it would be from her voice.</p>
+
+  <div id="stage"><img id="mouth" alt="" /></div>
+  <div id="meter"><div id="fill"></div></div>
+  <div id="label">—</div>
+  <button id="go">Start microphone</button>
+  <div class="grid" id="grid"></div>
+  <div id="err"></div>
+
+<script type="module">
+import { VisemeAnalyser } from '../src/lib/visemeAnalyser.js';
+
+const NAMES = ['neutral','BMP','FV','TH','L','CDNST','CHJSH','GK','EE','AEI','WQ','O','U'];
+const imgs = {};
+const grid = document.getElementById('grid');
+for (const n of NAMES) {
+  imgs[n] = new Image();
+  imgs[n].src = `mouth/visemes/${n}.png`;
+  const s = document.createElement('span');
+  s.textContent = n; s.id = `t-${n}`;
+  grid.appendChild(s);
+}
+
+const mouth = document.getElementById('mouth');
+const label = document.getElementById('label');
+const fill = document.getElementById('fill');
+const btn = document.getElementById('go');
+const err = document.getElementById('err');
+
+mouth.src = imgs.neutral.src;
+let analyser = null, raf = null, last = 'neutral';
+
+btn.onclick = async () => {
+  if (analyser) {
+    cancelAnimationFrame(raf);
+    analyser.close(); analyser = null;
+    btn.textContent = 'Start microphone'; btn.classList.remove('off');
+    mouth.src = imgs.neutral.src; label.textContent = '—'; fill.style.width = '0%';
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    analyser = new VisemeAnalyser();
+    analyser.attach(stream);
+    btn.textContent = 'Stop'; btn.classList.add('off');
+    err.textContent = '';
+    loop();
+  } catch (e) {
+    err.textContent = `Microphone unavailable: ${e.message}. This page must be served over
+      http://localhost or https — opening the file directly will not work.`;
+  }
+};
+
+function loop() {
+  const { viseme, level } = analyser.read();
+  fill.style.width = `${Math.round(level * 100)}%`;
+  if (viseme !== last) {
+    document.getElementById(`t-${last}`)?.classList.remove('on');
+    document.getElementById(`t-${viseme}`)?.classList.add('on');
+    mouth.src = imgs[viseme]?.src ?? imgs.neutral.src;
+    label.textContent = viseme;
+    last = viseme;
+  }
+  raf = requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
