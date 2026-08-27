@@ -259,47 +259,16 @@ export class Stage {
       for (const name of Object.keys(bones)) this.restRot[name] = bones[name].quaternion.clone();
       this.scene.add(gltf.scene);
       frameModel(gltf.scene);
-      this.collectMouthMeshes(gltf.scene);
       return 'rigged';
     }
 
-    // No skeleton. She can still talk: the mouth shape key lives on a plain
-    // mesh, not a skinned one, so it is collected separately below.
+    // No skeleton and no blendshapes: she can stand and breathe, nothing more.
     this.clearRig();
     this.staticModel = gltf.scene;
     this.scene.add(gltf.scene);
     frameModel(gltf.scene);
     this.staticBaseY = gltf.scene.position.y;
-    this.collectMouthMeshes(gltf.scene);
     return 'static';
-  }
-
-  // Find every mesh carrying a mouth shape key, skinned or not, and set it to
-  // the resting (closed) position straight away so she never appears mid-word
-  // before the first audio arrives.
-  collectMouthMeshes(root) {
-    this.mouthMeshes = [];
-    root.traverse((o) => {
-      if (!o.isMesh || !o.morphTargetDictionary) return;
-      const idx = o.morphTargetDictionary.MouthClosed
-        ?? o.morphTargetDictionary.MouthOpen;
-      if (idx === undefined) return;
-      this.mouthMeshes.push({ mesh: o, idx });
-      o.morphTargetInfluences[idx] = REST_CLOSE;
-    });
-    this._mouthSmoothed = 0;
-    return this.mouthMeshes.length;
-  }
-
-  // Drive the mouth from the smoothed volume. Runs every frame regardless of
-  // which rig branch is active.
-  updateMouth() {
-    if (!this.mouthMeshes?.length) return;
-    this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, this.controller.mouth, 0.3);
-    const w = REST_CLOSE - this._mouthSmoothed * (REST_CLOSE - MIN_CLOSE);
-    for (const { mesh, idx } of this.mouthMeshes) {
-      mesh.morphTargetInfluences[idx] = w;
-    }
   }
 
   // Blend the current gesture pose toward the rig, whichever rig that is.
@@ -435,7 +404,36 @@ export class Stage {
       spine.quaternion.copy(rest.Spine).multiply(delta);
     }
 
-    // Mouth is handled centrally in updateMouth(); see the frame loop.
+    // c.mouth is already smoothed upstream, but it can still swing from 0 to
+    // ~1 within a couple of frames on a loud syllable. Applied raw, this
+    // shape key reads as a hard binary snap rather than talking — the VRM
+    // path avoids this by blending several visemes at partial weight (max
+    // 0.85 on 'aa'), but this rig only has the one shape key. So: smooth its
+    // own approach on top of the existing amplitude smoothing, for a softer,
+    // less mechanical mouth.
+    //
+    // The earlier 0.7 cap here was based on a wrong assumption — the shape
+    // key's own pull was checked directly in Blender (2026-08-26) and is
+    // barely visible even at a full 1.0 weight (the mesh has no real mouth
+    // cavity, just a shallow lower-lip recess), so capping it below 1.0 only
+    // made an already-subtle motion smaller. The shape key itself has been
+    // rebuilt with ~1.6x its original pull and the cap removed; the full
+    // 0-1 range is small even now, so don't reintroduce a cap without
+    // re-checking in Blender that it isn't just hiding the same problem.
+    const target = c.mouth;
+    this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, target, 0.3);
+    // The mesh can be split across multiple primitives (multiple materials),
+    // each with its own copy of the morph target — drive every one that has it.
+    for (const mesh of this.riggedMeshes) {
+      const idx = (mesh.morphTargetDictionary?.MouthClosed ?? mesh.morphTargetDictionary?.MouthOpen);
+      if (idx !== undefined) {
+        mesh.morphTargetInfluences[idx] =
+          REST_CLOSE - this._mouthSmoothed * (REST_CLOSE - MIN_CLOSE);
+      }
+    }
+    // Same smoothed value drives the hidden "teeth bar" — see the comment in
+    // loadModel(). It fades in exactly as fast as the jaw appears to drop.
+    // No overlay of any kind: her own lips carry the movement.
   }
 
   applyToPlaceholder(pose) {
@@ -475,8 +473,6 @@ export class Stage {
     const t = this.clock.elapsedTime;
     this.controller.tick(dt);
     const pose = this.currentPose(t);
-
-    this.updateMouth();
 
     if (this.vrm) this.applyToVRM(pose, dt);
     else if (this.riggedMeshes) this.applyToRigged(pose);
