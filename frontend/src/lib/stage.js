@@ -8,9 +8,9 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 //
 // REST_CLOSE is how shut she sits when silent. Slightly under 1.0 leaves a
 // natural hint of a parting rather than a pressed-flat line.
-const REST_CLOSE = 0.96;
+const REST_CLOSE = 1.0;
 // How far she is allowed to open at peak volume. Lower opens wider.
-const MIN_CLOSE = 0.12;
+const MIN_CLOSE = 0.0;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
