@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 // The model is now authored with her mouth OPEN, and carries a MouthClosed
@@ -179,6 +180,14 @@ export class Stage {
   // found, so the UI can say honestly what will and will not move.
   async loadModel(url) {
     const loader = new GLTFLoader();
+
+    // The model ships Draco-compressed: 166k triangles in 2.9 MB rather than
+    // 13 MB. Without this decoder the file will not load at all.
+    // The decoder is fetched once and cached by the browser.
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+    draco.setDecoderConfig({ type: 'js' });
+    loader.setDRACOLoader(draco);
     loader.register((parser) => new VRMLoaderPlugin(parser));
     const gltf = await loader.loadAsync(url);
     const vrm = gltf.userData.vrm;
