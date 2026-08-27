@@ -182,14 +182,25 @@ export class Stage {
     const loader = new GLTFLoader();
 
     // The model ships Draco-compressed: 166k triangles in 2.9 MB rather than
-    // 13 MB. Without this decoder the file will not load at all.
-    // The decoder is fetched once and cached by the browser.
+    // 13 MB. Without a matching decoder the file will not load at all, and it
+    // fails quietly — the page works, the character simply never appears.
+    // The decoder is served from /public/draco, copied from the exact three.js
+    // build in package.json, so it cannot drift out of version.
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
-    draco.setDecoderConfig({ type: 'js' });
+    draco.setDecoderPath('/draco/');
     loader.setDRACOLoader(draco);
     loader.register((parser) => new VRMLoaderPlugin(parser));
-    const gltf = await loader.loadAsync(url);
+    let gltf;
+    try {
+      gltf = await loader.loadAsync(url);
+    } catch (err) {
+      // Silent model failures cost hours to diagnose. Say what broke.
+      const hint = /draco/i.test(String(err?.message ?? err))
+        ? 'The Draco decoder failed to load — check that /draco/ is being served.'
+        : 'Check that the model file exists and is a valid .glb.';
+      console.error(`[stage] Could not load "${url}". ${hint}`, err);
+      throw err;
+    }
     const vrm = gltf.userData.vrm;
 
     if (vrm) {
