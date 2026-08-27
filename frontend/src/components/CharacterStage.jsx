@@ -31,12 +31,20 @@ export default function CharacterStage({ controller, speaking }) {
     // once the model has stabilized and caching is worth having back.
     const cacheBust = `?v=${Date.now()}`;
     (async () => {
+      const failures = [];
       for (const url of ['/character.vrm', '/character.glb']) {
         try {
           setRig(await stage.loadModel(url + cacheBust));
           return;
-        } catch { /* try the next one */ }
+        } catch (err) {
+          // A missing .vrm is expected and not worth reporting; anything
+          // else is a real failure the user needs to see. Swallowing these
+          // is why a broken model looked identical to no model at all.
+          failures.push(`${url}: ${err?.message ?? err}`);
+        }
       }
+      console.error('[stage] no model loaded\n' + failures.join('\n'));
+      setLoadError(failures[failures.length - 1] ?? 'Model failed to load.');
     })();
 
     return () => stage.dispose();
