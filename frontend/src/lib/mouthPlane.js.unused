@@ -1,0 +1,175 @@
+import * as THREE from 'three';
+
+// A textured plane parked over her mouth, parented to the Head bone.
+//
+// Why this exists: the model has a Head bone but no jaw or lip bones, and its
+// single MouthOpen morph only drags ~960 lower-face vertices down and slightly
+// forward. It never parts the lips or creates an interior, so pushing it
+// harder just droops her chin. The morph is disabled and this replaces it.
+//
+// Teeth and the inner mouth are painted into the textures, so no new geometry
+// is needed. The trade-off is that a flat plane only holds up while she faces
+// roughly forward; large side-on head turns would need a real mouth modelled
+// in Blender.
+
+// Position in model space. Measured in Blender by raycasting her face surface:
+// her lip line is at y=0.2355. (The MouthDark mesh that shipped with the model
+// sits at y=0.226 — on her chin — which is why it always looked wrong.)
+export const DEFAULT_MOUTH = {
+  x: -0.3590,
+  y: 0.2355,
+  z: 0.0780,   // face surface at the mouth is ~0.076; sit just proud of it
+  width: 0.030,
+  height: 0.016,
+  tilt: -0.18, // her lower face slopes back
+};
+
+// Amplitude thresholds for the four states, with hysteresis: a level is only
+// released once the volume drops clearly below where it was entered. Without
+// this it flickers between two textures several times per syllable.
+// Never fully opaque: a solid fill reads as a hole punched in her face,
+// while a slightly translucent one reads as shadow inside a mouth.
+const MAX_OPACITY = 0.82;
+
+const UP = [0.10, 0.34, 0.62];
+const DOWN = [0.06, 0.26, 0.52];
+const HOLD_MS = 45;
+
+// Tones chosen to sit against her rendered skin rather than read as clip-art.
+const CAVITY = '#5c3036';
+const CAVITY_DEEP = '#432026';
+const TEETH = '#e8ddd0';
+const TONGUE = '#9c565c';
+const LIPLINE = 'rgba(118,60,60,0.55)';
+
+const W = 512, H = 320;
+
+// Draws one mouth state. open: 0 = closed, 1 = wide.
+function drawMouth(open) {
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const cx = W / 2, cy = H / 2;
+
+  if (open <= 0.01) {
+    // Closed: a soft crease only, so the plane never shows a hard edge.
+    g.filter = 'blur(4px)';
+    g.fillStyle = LIPLINE;
+    g.beginPath();
+    g.ellipse(cx, cy, W * 0.34, H * 0.026, 0, 0, Math.PI * 2);
+    g.fill();
+    return cv;
+  }
+
+  const hw = W * (0.30 + 0.045 * open);
+  const hh = H * (0.040 + 0.185 * open);
+
+  // Clip everything to the mouth outline so teeth can't overshoot it.
+  g.save();
+  g.beginPath();
+  g.ellipse(cx, cy, hw, hh, 0, 0, Math.PI * 2);
+  g.clip();
+
+  g.fillStyle = CAVITY;
+  g.fillRect(0, 0, W, H);
+
+  g.fillStyle = CAVITY_DEEP;
+  g.beginPath();
+  g.ellipse(cx, cy + hh * 0.15, hw * 0.80, hh * 0.70, 0, 0, Math.PI * 2);
+  g.fill();
+
+  if (open > 0.40) {
+    g.fillStyle = TONGUE;
+    g.beginPath();
+    g.ellipse(cx, cy + hh * 0.60, hw * 0.62, hh * 0.45, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // Upper teeth: an arc hugging the top edge, not a straight bar.
+  if (open > 0.15) {
+    const t = hh * (open < 0.55 ? 0.34 : 0.26);
+    g.fillStyle = TEETH;
+    g.beginPath();
+    g.ellipse(cx, cy - hh + t * 0.7, hw * 0.96, t, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  if (open > 0.60) {
+    const t = hh * 0.20;
+    g.fillStyle = TEETH;
+    g.beginPath();
+    g.ellipse(cx, cy + hh - t * 0.7, hw * 0.88, t, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.restore();
+
+  // Feather the silhouette so it blends into her lips instead of cutting.
+  const soft = document.createElement('canvas');
+  soft.width = W; soft.height = H;
+  const s = soft.getContext('2d');
+  s.filter = `blur(${Math.round(W * 0.012)}px)`;
+  s.drawImage(cv, 0, 0);
+  return soft;
+}
+
+export class MouthPlane {
+  constructor(cfg = DEFAULT_MOUTH) {
+    this.cfg = { ...cfg };
+    this.level = 0;
+    this._changedAt = 0;
+
+    this.textures = [0, 0.33, 0.66, 1].map((v) => {
+      const t = new THREE.CanvasTexture(drawMouth(v));
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      return t;
+    });
+
+    this.material = new THREE.MeshBasicMaterial({
+      map: this.textures[0],
+      transparent: true,
+      opacity: MAX_OPACITY,
+      depthWrite: false,
+      depthTest: false,   // always draws over her face, like the old MouthDark
+      toneMapped: false,
+    });
+
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.material);
+    this.mesh.renderOrder = 999;
+    this.mesh.frustumCulled = false;
+    this.apply({});
+  }
+
+  apply(patch) {
+    this.cfg = { ...this.cfg, ...patch };
+    const c = this.cfg;
+    this.mesh.position.set(c.x, c.y, c.z);
+    this.mesh.scale.set(c.width, c.height, 1);
+    this.mesh.rotation.set(c.tilt, 0, 0);
+  }
+
+  // volume: 0..1, the same smoothed amplitude that drove the morph.
+  update(volume) {
+    let want = 0;
+    if (volume > UP[2]) want = 3;
+    else if (volume > UP[1]) want = 2;
+    else if (volume > UP[0]) want = 1;
+
+    if (want < this.level && volume > (DOWN[this.level - 1] ?? 0)) {
+      want = this.level;
+    }
+
+    const now = performance.now();
+    if (want !== this.level && now - this._changedAt > HOLD_MS) {
+      this.level = want;
+      this._changedAt = now;
+      this.material.map = this.textures[want];
+      this.material.needsUpdate = true;
+    }
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    for (const t of this.textures) t.dispose();
+  }
+}

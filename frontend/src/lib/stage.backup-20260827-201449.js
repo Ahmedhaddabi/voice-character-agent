@@ -2,15 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-// The model is now authored with her mouth OPEN, and carries a MouthClosed
-// shape key that brings the lips together. So the drive is inverted: silence
-// means fully closed, speech opens toward zero.
-//
-// REST_CLOSE is how shut she sits when silent. Slightly under 1.0 leaves a
-// natural hint of a parting rather than a pressed-flat line.
-const REST_CLOSE = 0.96;
-// How far she is allowed to open at peak volume. Lower opens wider.
-const MIN_CLOSE = 0.12;
+// How far to drive the MouthOpen shape key. The key was rebuilt at ~1.6x its
+// original pull, so a full 1.0 now overshoots into a dropped jaw. This scales
+// it back to a talking amount.
+// Raise for more movement, lower if her chin drops too far.
+const MOUTH_DRIVE = 0.55;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
@@ -425,11 +421,8 @@ export class Stage {
     // The mesh can be split across multiple primitives (multiple materials),
     // each with its own copy of the morph target — drive every one that has it.
     for (const mesh of this.riggedMeshes) {
-      const idx = (mesh.morphTargetDictionary?.MouthClosed ?? mesh.morphTargetDictionary?.MouthOpen);
-      if (idx !== undefined) {
-        mesh.morphTargetInfluences[idx] =
-          REST_CLOSE - this._mouthSmoothed * (REST_CLOSE - MIN_CLOSE);
-      }
+      const idx = mesh.morphTargetDictionary?.MouthOpen;
+      if (idx !== undefined) mesh.morphTargetInfluences[idx] = this._mouthSmoothed * MOUTH_DRIVE;
     }
     // Same smoothed value drives the hidden "teeth bar" — see the comment in
     // loadModel(). It fades in exactly as fast as the jaw appears to drop.
