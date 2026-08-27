@@ -10,10 +10,14 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 // natural hint of a parting rather than a pressed-flat line.
 const REST_CLOSE = 1.0;
 // How far she is allowed to open at peak volume. Lower opens wider.
-const MIN_CLOSE = 0.0;
+const MIN_CLOSE = 0.14;
 // Below this the mouth is treated as fully shut, so she rests closed instead
 // of hovering a fraction open forever.
-const SILENCE_DEADZONE = 0.035;
+const SILENCE_DEADZONE = 0.060;
+// Response curve on the amplitude. 1.0 is linear; higher keeps her closer to
+// shut through ordinary speech and reserves a wide opening for loud syllables.
+// Lower it if she starts to look tight-lipped.
+const MOUTH_CURVE = 1.7;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
@@ -310,12 +314,17 @@ export class Stage {
   updateMouth() {
     if (!this.mouthMeshes?.length) return;
 
-    const target = this.controller.mouth;
+    // Amplitude spends most of speech in the middle of its range, so feeding
+    // it through linearly leaves her sitting half-open the whole time. The
+    // exponent pushes quiet and mid-level moments back toward closed while
+    // still letting loud syllables open fully — the gaps between words start
+    // reading as gaps.
+    const target = Math.pow(Math.max(0, this.controller.mouth), MOUTH_CURVE);
     const prev = this._mouthSmoothed ?? 0;
 
     // Mouths shut faster than they open, and closing quickly is what makes
     // speech look crisp rather than mushy.
-    const rate = target > prev ? 0.35 : 0.55;
+    const rate = target > prev ? 0.38 : 0.72;
     let v = lerp(prev, target, rate);
 
     // Both this and pushAmplitude smooth exponentially, so the value only
