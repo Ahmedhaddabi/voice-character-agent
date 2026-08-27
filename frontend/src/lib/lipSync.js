@@ -5,7 +5,10 @@
 // character. Swap read() for a formant-based viseme blend later without
 // touching anything else.
 
-const NOISE_FLOOR = 0.012;
+// Silence is never truly silent: stream hiss and room tone sit a little above
+// zero, and anything above this floor holds her mouth open. Raised from 0.012,
+// which was low enough that she never fully closed between words.
+const NOISE_FLOOR = 0.030;
 const GAIN = 3.6;
 
 export class LipSync {

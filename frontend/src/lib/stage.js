@@ -12,6 +12,9 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 const REST_CLOSE = 1.0;
 // How far she is allowed to open at peak volume. Lower opens wider.
 const MIN_CLOSE = 0.0;
+// Below this the mouth is treated as fully shut, so she rests closed instead
+// of hovering a fraction open forever.
+const SILENCE_DEADZONE = 0.035;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
@@ -315,8 +318,22 @@ export class Stage {
   // which rig branch is active.
   updateMouth() {
     if (!this.mouthMeshes?.length) return;
-    this._mouthSmoothed = lerp(this._mouthSmoothed ?? 0, this.controller.mouth, 0.3);
-    const w = REST_CLOSE - this._mouthSmoothed * (REST_CLOSE - MIN_CLOSE);
+
+    const target = this.controller.mouth;
+    const prev = this._mouthSmoothed ?? 0;
+
+    // Mouths shut faster than they open, and closing quickly is what makes
+    // speech look crisp rather than mushy.
+    const rate = target > prev ? 0.35 : 0.55;
+    let v = lerp(prev, target, rate);
+
+    // Both this and pushAmplitude smooth exponentially, so the value only
+    // ever approaches zero — it never arrives. Left alone that parks her
+    // mouth permanently a fraction open. Snap the last sliver shut.
+    if (v < SILENCE_DEADZONE && target < SILENCE_DEADZONE) v = 0;
+
+    this._mouthSmoothed = v;
+    const w = REST_CLOSE - v * (REST_CLOSE - MIN_CLOSE);
     for (const { mesh, idx } of this.mouthMeshes) {
       mesh.morphTargetInfluences[idx] = w;
     }
