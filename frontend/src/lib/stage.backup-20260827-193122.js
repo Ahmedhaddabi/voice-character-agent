@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import { MouthPlane } from './mouthPlane';
 
-// The MouthOpen morph is disabled — it drags the lower face down without ever
-// parting the lips, so no amount of it produces an open mouth. A textured
-// plane over her mouth does the work instead; see ./mouthPlane.js.
-const USE_MOUTH_MORPH = false;
+// How hard to push the jaw shape key. Morph influences are not clamped to 1,
+// so values above it exaggerate the authored motion. The shape key as shipped
+// moves the lower lip only ~11mm on average, which barely reads at
+// conversation distance; this makes the open/close obvious.
+// Raise for more movement, lower if her chin starts to distort.
+const MOUTH_DRIVE = 2.2;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
@@ -240,28 +241,10 @@ export class Stage {
         // Translating the geometry (not the object) is deliberate: this is a
         // skinned mesh, so its object transform is largely overridden by the
         // skeleton, whereas a geometry offset survives skinning.
-        // Hidden: it sits on her chin (y=0.226), not her lips (y=0.2355),
-        // so fading it in only ever produced a dark smear on her jaw.
+        // Hidden entirely. This mesh sits on her chin, not her lips, and
+        // fading it in produced a dark smear rather than an open mouth.
+        // The jaw morph alone carries the movement now.
         this.mouthDark.visible = false;
-      }
-
-      // The mouth plane, parented to the Head bone so it follows head turns.
-      this.mouthPlane = new MouthPlane();
-      // bones is keyed by the raw bone name from the GLB, so 'Head'
-      // (capitalised), with fallbacks for other rig naming conventions.
-      const headBone = bones.Head ?? bones.head ?? bones.mixamorigHead
-        ?? Object.values(bones).find((b) => /head/i.test(b?.name ?? ''));
-      if (headBone) {
-        // Place it in model space first, then hand it to the bone —
-        // attach() preserves the world transform, so the bone's own rest
-        // rotation does not have to be unpicked by hand.
-        this.scene.add(this.mouthPlane.mesh);
-        gltf.scene.updateMatrixWorld(true);
-        this.mouthPlane.mesh.applyMatrix4(gltf.scene.matrixWorld);
-        headBone.updateMatrixWorld(true);
-        headBone.attach(this.mouthPlane.mesh);
-      } else {
-        gltf.scene.add(this.mouthPlane.mesh);
       }
       // Bone orientations here are not normalized like a VRM rig: her arms
       // rest at her sides, a compound rotation on every axis, not identity.
@@ -440,15 +423,11 @@ export class Stage {
     // each with its own copy of the morph target — drive every one that has it.
     for (const mesh of this.riggedMeshes) {
       const idx = mesh.morphTargetDictionary?.MouthOpen;
-      if (idx !== undefined) {
-        mesh.morphTargetInfluences[idx] = USE_MOUTH_MORPH ? this._mouthSmoothed : 0;
-      }
+      if (idx !== undefined) mesh.morphTargetInfluences[idx] = this._mouthSmoothed * MOUTH_DRIVE;
     }
     // Same smoothed value drives the hidden "teeth bar" — see the comment in
     // loadModel(). It fades in exactly as fast as the jaw appears to drop.
-    // The plane switches between four painted mouth states on the same
-    // smoothed volume that used to drive the morph.
-    if (this.mouthPlane) this.mouthPlane.update(this._mouthSmoothed);
+    // MouthDark stays hidden — see loadModel(). Nothing to fade.
   }
 
   applyToPlaceholder(pose) {
