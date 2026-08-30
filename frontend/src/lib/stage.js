@@ -2,15 +2,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-// The model is now authored with her mouth OPEN, and carries a MouthClosed
-// shape key that brings the lips together. So the drive is inverted: silence
-// means fully closed, speech opens toward zero.
+// The model is authored with her mouth CLOSED, and carries a MouthOpen shape
+// key that parts the lips. Default weight is 0, so if the morph is never
+// applied for any reason she simply stays shut — the failure mode is a calm
+// closed mouth rather than a permanent gape.
 //
-// REST_CLOSE is how shut she sits when silent. Slightly under 1.0 leaves a
-// natural hint of a parting rather than a pressed-flat line.
-const REST_CLOSE = 1.0;
-// How far she is allowed to open at peak volume. Lower opens wider.
-const MIN_CLOSE = 0.14;
+// MAX_OPEN is how far she parts at peak volume.
+const MAX_OPEN = 0.86;
 // Below this the mouth is treated as fully shut, so she rests closed instead
 // of hovering a fraction open forever.
 const SILENCE_DEADZONE = 0.115;
@@ -299,11 +297,11 @@ export class Stage {
     this.mouthMeshes = [];
     root.traverse((o) => {
       if (!o.isMesh || !o.morphTargetDictionary) return;
-      const idx = o.morphTargetDictionary.MouthClosed
-        ?? o.morphTargetDictionary.MouthOpen;
+      const idx = o.morphTargetDictionary.MouthOpen
+        ?? o.morphTargetDictionary.MouthClosed;
       if (idx === undefined) return;
       this.mouthMeshes.push({ mesh: o, idx });
-      o.morphTargetInfluences[idx] = REST_CLOSE;
+      o.morphTargetInfluences[idx] = 0;
     });
     this._mouthSmoothed = 0;
     return this.mouthMeshes.length;
@@ -340,7 +338,7 @@ export class Stage {
     if (v < SILENCE_DEADZONE) v = 0;
 
     this._mouthSmoothed = v;
-    const w = REST_CLOSE - v * (REST_CLOSE - MIN_CLOSE);
+    const w = v * MAX_OPEN;
     for (const { mesh, idx } of this.mouthMeshes) {
       mesh.morphTargetInfluences[idx] = w;
     }
