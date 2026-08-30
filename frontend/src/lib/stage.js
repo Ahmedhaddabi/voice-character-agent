@@ -13,7 +13,7 @@ const REST_CLOSE = 1.0;
 const MIN_CLOSE = 0.14;
 // Below this the mouth is treated as fully shut, so she rests closed instead
 // of hovering a fraction open forever.
-const SILENCE_DEADZONE = 0.060;
+const SILENCE_DEADZONE = 0.115;
 // Response curve on the amplitude. 1.0 is linear; higher keeps her closer to
 // shut through ordinary speech and reserves a wide opening for loud syllables.
 // Lower it if she starts to look tight-lipped.
@@ -327,10 +327,17 @@ export class Stage {
     const rate = target > prev ? 0.38 : 0.72;
     let v = lerp(prev, target, rate);
 
+    // When she is not producing audio, drive hard to shut rather than waiting
+    // for the smoothing to drift there. This is the difference between lips
+    // that settle closed between phrases and lips that hang slightly apart.
+    if (!this.controller.speaking) v = Math.min(v, prev * 0.45);
+
     // Both this and pushAmplitude smooth exponentially, so the value only
-    // ever approaches zero — it never arrives. Left alone that parks her
-    // mouth permanently a fraction open. Snap the last sliver shut.
-    if (v < SILENCE_DEADZONE && target < SILENCE_DEADZONE) v = 0;
+    // ever approaches zero — it never arrives. The old form also required the
+    // incoming level to be under the threshold, which the response curve keeps
+    // it just above at idle, so the snap never fired and she sat a few percent
+    // open. Judge the smoothed value alone.
+    if (v < SILENCE_DEADZONE) v = 0;
 
     this._mouthSmoothed = v;
     const w = REST_CLOSE - v * (REST_CLOSE - MIN_CLOSE);
