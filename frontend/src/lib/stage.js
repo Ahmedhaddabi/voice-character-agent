@@ -61,7 +61,7 @@ const TARGET_HEIGHT = 1.65;
 // scene's actual bounding box and normalize it: feet at y=0, centered on
 // x/z, scaled to a consistent height. Without this, anything that was not
 // authored at exactly "1.6m tall, feet at origin" renders off-screen.
-function frameModel(object, camera) {
+function frameModel(object) {
   const box = new THREE.Box3().setFromObject(object);
   if (!isFinite(box.min.y)) return; // empty geometry, nothing to frame
 
@@ -75,20 +75,6 @@ function frameModel(object, camera) {
   object.position.x -= center.x * scale;
   object.position.z -= center.z * scale;
   object.position.y -= box.min.y * scale;
-
-  // After scaling, the model stands TARGET_HEIGHT tall with feet at y=0.
-  // Frame the camera on the upper body so the face fills the view, whatever
-  // the source model's original size or proportions were. Hardcoded camera
-  // positions only ever fit one specific character.
-  if (camera) {
-    const h = TARGET_HEIGHT;
-    const faceY = h * 0.88;          // head height for a standing figure
-    const lookY = h * 0.62;          // frame chest-up
-    const dist = h * 1.35;           // pull back enough to see head + torso
-    camera.position.set(0, faceY, dist);
-    camera.lookAt(0, lookY, 0);
-    camera.updateProjectionMatrix();
-  }
 }
 
 export class Stage {
@@ -288,7 +274,7 @@ export class Stage {
       this.restRot = {};
       for (const name of Object.keys(bones)) this.restRot[name] = bones[name].quaternion.clone();
       this.scene.add(gltf.scene);
-      frameModel(gltf.scene, this.camera);
+      frameModel(gltf.scene);
       this.collectMouthMeshes(gltf.scene);
       return 'rigged';
     }
@@ -298,7 +284,7 @@ export class Stage {
     this.clearRig();
     this.staticModel = gltf.scene;
     this.scene.add(gltf.scene);
-    frameModel(gltf.scene, this.camera);
+    frameModel(gltf.scene);
     this.staticBaseY = gltf.scene.position.y;
     this.collectMouthMeshes(gltf.scene);
     return 'static';
@@ -473,10 +459,10 @@ export class Stage {
     };
     // GLTFLoader strips '.' from node names (it uses '.' as the separator in
     // animation track paths), so "UpperArm.R" in the file becomes "UpperArmR".
-    addRot('RightArm', pose.rUpper);
-    addRot('LeftArm', pose.lUpper);
-    addRot('RightForeArm', pose.rLower);
-    addRot('LeftForeArm', pose.lLower);
+    addRot('UpperArmR', pose.rUpper);
+    addRot('UpperArmL', pose.lUpper);
+    addRot('ForeArmR', pose.rLower);
+    addRot('ForeArmL', pose.lLower);
 
     const head = b.Head;
     if (head) {
