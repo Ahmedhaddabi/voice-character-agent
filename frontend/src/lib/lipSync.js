@@ -8,8 +8,8 @@
 // Silence is never truly silent: stream hiss and room tone sit a little above
 // zero, and anything above this floor holds her mouth open. Raised from 0.012,
 // which was low enough that she never fully closed between words.
-const NOISE_FLOOR = 0.045;
-const GAIN = 3.6;
+const NOISE_FLOOR = 0.015;
+const GAIN = 5.0;
 
 export class LipSync {
   constructor() {

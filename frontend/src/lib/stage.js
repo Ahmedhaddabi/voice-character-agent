@@ -8,14 +8,14 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 // closed mouth rather than a permanent gape.
 //
 // MAX_OPEN is how far she parts at peak volume.
-const MAX_OPEN = 0.86;
+const MAX_OPEN = 1.0;
 // Below this the mouth is treated as fully shut, so she rests closed instead
 // of hovering a fraction open forever.
-const SILENCE_DEADZONE = 0.115;
+const SILENCE_DEADZONE = 0.06;
 // Response curve on the amplitude. 1.0 is linear; higher keeps her closer to
 // shut through ordinary speech and reserves a wide opening for loud syllables.
 // Lower it if she starts to look tight-lipped.
-const MOUTH_CURVE = 1.7;
+const MOUTH_CURVE = 1.0;
 
 // Gesture poses are expressed as bone rotation offsets in radians, so the same
 // definitions drive the placeholder figure and a real VRM rig.
