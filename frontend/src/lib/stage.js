@@ -459,10 +459,10 @@ export class Stage {
     };
     // GLTFLoader strips '.' from node names (it uses '.' as the separator in
     // animation track paths), so "UpperArm.R" in the file becomes "UpperArmR".
-    addRot('UpperArmR', pose.rUpper);
-    addRot('UpperArmL', pose.lUpper);
-    addRot('ForeArmR', pose.rLower);
-    addRot('ForeArmL', pose.lLower);
+    addRot('RightArm', pose.rUpper);
+    addRot('LeftArm', pose.lUpper);
+    addRot('RightForeArm', pose.rLower);
+    addRot('LeftForeArm', pose.lLower);
 
     const head = b.Head;
     if (head) {
