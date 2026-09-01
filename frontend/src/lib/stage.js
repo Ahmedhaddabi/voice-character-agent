@@ -23,25 +23,25 @@ const MOUTH_CURVE = 1.0;
 const POSES = {
   wave: (p) => {
     const lift = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    return { rUpper: [0, 0, -2.1 * lift], rLower: [0, 0, -0.5 * lift + Math.sin(p * 22) * 0.45 * lift] };
+    return { rUpper: [0, 0, -1.0 * lift], rLower: [0, 0, -0.3 * lift + Math.sin(p * 14) * 0.25 * lift] };
   },
   nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.22 }),
   shrug: (p) => {
     const s = Math.sin(p * Math.PI);
-    return { rUpper: [0, 0, -0.55 * s], lUpper: [0, 0, 0.55 * s], rLower: [0, 0, -0.7 * s], lLower: [0, 0, 0.7 * s], headX: -0.08 * s };
+    return { rUpper: [0, 0, -0.35 * s], lUpper: [0, 0, 0.35 * s], rLower: [0, 0, -0.4 * s], lLower: [0, 0, 0.4 * s], headX: -0.06 * s };
   },
   point: (p) => {
     const s = Math.sin(Math.min(1, p * 2.4) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.7) / 0.3);
-    return { rUpper: [0, -0.35 * s, -1.15 * s], rLower: [0, 0, -0.35 * s] };
+    return { rUpper: [0, -0.25 * s, -0.7 * s], rLower: [0, 0, -0.25 * s] };
   },
   think: (p) => {
     const s = Math.sin(Math.min(1, p * 2.5) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.75) / 0.25);
-    return { rUpper: [0, 0, -1.35 * s], rLower: [0, 0, -1.5 * s], headX: 0.12 * s, headY: 0.2 * s };
+    return { rUpper: [0, 0, -0.8 * s], rLower: [0, 0, -0.9 * s], headX: 0.10 * s, headY: 0.15 * s };
   },
   celebrate: (p) => {
-    const s = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    const b = Math.sin(p * 14) * 0.15 * s;
-    return { rUpper: [0, 0, -2.5 * s + b], lUpper: [0, 0, 2.5 * s - b], headX: -0.15 * s };
+    const s = Math.sin(Math.min(1, p * 3) * Math.PI * 0.3);
+    const b = Math.sin(p * 14) * 0.09 * s;
+    return { rUpper: [0, 0, -1.5 * s + b], lUpper: [0, 0, 1.5 * s - b], headX: -0.09 * s };
   },
 };
 
