@@ -22,27 +22,27 @@ const MOUTH_CURVE = 1.0;
 // phase runs 0..1 across the gesture.
 const POSES = {
   wave: (p) => {
+    // raise the right arm up (X = rot[2] ~ -1.4 = ~80deg up) and wave the hand
     const lift = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    // raise the upper arm up-and-out, then wave the forearm side to side
-    return { rUpper: [0, 0.4 * lift, -1.6 * lift], rLower: [0, 0, -0.4 * lift + Math.sin(p * 12) * 0.5 * lift] };
+    return { rUpper: [0, 0, -1.4 * lift], rLower: [0, 0, -0.5 * lift + Math.sin(p * 12) * 0.6 * lift] };
   },
-  nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.22 }),
+  nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.30 }),
   shrug: (p) => {
     const s = Math.sin(p * Math.PI);
-    return { rUpper: [0, 0, -0.35 * s], lUpper: [0, 0, 0.35 * s], rLower: [0, 0, -0.4 * s], lLower: [0, 0, 0.4 * s], headX: -0.06 * s };
+    return { rUpper: [0, 0, -0.6 * s], lUpper: [0, 0, -0.6 * s], rLower: [0, 0, -0.5 * s], lLower: [0, 0, -0.5 * s], headX: -0.10 * s };
   },
   point: (p) => {
     const s = Math.sin(Math.min(1, p * 2.4) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.7) / 0.3);
-    return { rUpper: [0, -0.25 * s, -0.7 * s], rLower: [0, 0, -0.25 * s] };
+    return { rUpper: [0, -0.3, -1.0 * s], rLower: [0, 0, -0.2 * s] };
   },
   think: (p) => {
     const s = Math.sin(Math.min(1, p * 2.5) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.75) / 0.25);
-    return { rUpper: [0, 0, -0.8 * s], rLower: [0, 0, -0.9 * s], headX: 0.10 * s, headY: 0.15 * s };
+    return { rUpper: [0, 0, -1.6 * s], rLower: [0, 0, -1.4 * s], headX: 0.12 * s, headY: 0.18 * s };
   },
   celebrate: (p) => {
-    const s = Math.sin(Math.min(1, p * 3) * Math.PI * 0.3);
-    const b = Math.sin(p * 14) * 0.09 * s;
-    return { rUpper: [0, 0, -1.5 * s + b], lUpper: [0, 0, 1.5 * s - b], headX: -0.09 * s };
+    const s = Math.sin(Math.min(1, p * 3) * Math.PI * 0.4);
+    const b = Math.sin(p * 12) * 0.12 * s;
+    return { rUpper: [0, 0, -1.8 * s + b], lUpper: [0, 0, -1.8 * s + b], headX: -0.12 * s };
   },
 };
 
@@ -449,7 +449,7 @@ export class Stage {
     // reads as a fairly exaggerated swing on this character's proportions,
     // so ARM_SCALE is set to a visibly large-but-not-maxed value rather than
     // 1.0 — nudge it once you've seen it live.
-    const ARM_SCALE = 1.3;
+    const ARM_SCALE = 1.0;
     const addRot = (name, rot) => {
       const node = b[name];
       const r = rest[name];
