@@ -23,7 +23,8 @@ const MOUTH_CURVE = 1.0;
 const POSES = {
   wave: (p) => {
     const lift = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    return { rUpper: [0, 0, -1.0 * lift], rLower: [0, 0, -0.3 * lift + Math.sin(p * 14) * 0.25 * lift] };
+    // raise the upper arm up-and-out, then wave the forearm side to side
+    return { rUpper: [0, 0.4 * lift, -1.6 * lift], rLower: [0, 0, -0.4 * lift + Math.sin(p * 12) * 0.5 * lift] };
   },
   nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.22 }),
   shrug: (p) => {
@@ -448,7 +449,7 @@ export class Stage {
     // reads as a fairly exaggerated swing on this character's proportions,
     // so ARM_SCALE is set to a visibly large-but-not-maxed value rather than
     // 1.0 — nudge it once you've seen it live.
-    const ARM_SCALE = 0.6;
+    const ARM_SCALE = 1.3;
     const addRot = (name, rot) => {
       const node = b[name];
       const r = rest[name];
