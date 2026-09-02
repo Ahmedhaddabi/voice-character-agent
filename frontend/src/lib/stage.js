@@ -22,9 +22,15 @@ const MOUTH_CURVE = 1.0;
 // phase runs 0..1 across the gesture.
 const POSES = {
   wave: (p) => {
-    // raise the right arm up (X = rot[2] ~ -1.4 = ~80deg up) and wave the hand
+    // raise the arm up, then wave from the WRIST (rHand) side to side - this is
+    // what reads as a real wave. Forearm adds a little, wrist does the waving.
     const lift = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    return { rUpper: [0, 0, -1.4 * lift], rLower: [0, 0, -0.5 * lift + Math.sin(p * 12) * 0.6 * lift] };
+    const wag = Math.sin(p * 12) * lift;
+    return {
+      rUpper: [0, 0, -1.4 * lift],
+      rLower: [0, 0, -0.5 * lift],
+      rHand: [0, 0, 0.5 * wag],
+    };
   },
   nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.30 }),
   shrug: (p) => {
@@ -464,6 +470,8 @@ export class Stage {
     addRot('UpperArmL', pose.lUpper);
     addRot('ForeArmR', pose.rLower);
     addRot('ForeArmL', pose.lLower);
+    addRot('RightHand', pose.rHand);
+    addRot('LeftHand', pose.lHand);
 
     const head = b.Head;
     if (head) {
