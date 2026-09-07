@@ -33,7 +33,7 @@ export default function CharacterStage({ controller, speaking }) {
     const cacheBust = `?v=${Date.now()}`;
     (async () => {
       const failures = [];
-      for (const url of ['/character.vrm', '/character.glb?v=bone-mouth-v15']) {
+      for (const url of ['/character.vrm', '/character.glb?v=red-lips-v9new']) {
         try {
           setRig(await stage.loadModel(url + cacheBust));
           return;
