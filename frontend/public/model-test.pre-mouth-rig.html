@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Model test — build 3</title>
+<style>
+  :root { --bg:#201720; --surface:#352533; --line:#4a3646; --text:#f2e8e6; --muted:#a8949c; --brass:#c89b5a; --rose:#b8455e; --teal:#3f9a8e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:'Inter Tight',system-ui,sans-serif; font-size:14px; line-height:1.6; }
+  .wrap { display:grid; grid-template-columns:1fr 340px; height:100vh; }
+  canvas { display:block; width:100%; height:100%; }
+  .panel { border-left:1px solid var(--line); padding:18px; overflow-y:auto; background:var(--surface); }
+  h1 { font-size:16px; font-weight:500; margin:0 0 4px; }
+  h2 { font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+       margin:22px 0 8px; font-weight:500; }
+  .sub { color:var(--muted); font-size:12px; margin:0 0 8px; }
+  .row { display:flex; gap:8px; align-items:baseline; padding:3px 0; font-size:13px; }
+  .ok::before { content:'✓'; color:var(--teal); }
+  .bad::before { content:'✕'; color:var(--rose); }
+  code { font-size:12px; color:var(--brass); word-break:break-all; }
+  label { display:grid; grid-template-columns:1fr; gap:4px; margin:12px 0; }
+  label span { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
+  input[type=range] { width:100%; accent-color:var(--brass); }
+  button { background:transparent; border:1px solid var(--line); border-radius:8px;
+           color:var(--text); padding:8px 14px; font:inherit; font-size:13px; cursor:pointer; margin-right:6px; }
+  button:hover { border-color:var(--brass); color:var(--brass); }
+  #err { color:var(--rose); white-space:pre-wrap; font-size:12px; }
+  @media (max-width:800px){ .wrap{ grid-template-columns:1fr; grid-template-rows:50vh 1fr; }
+    .panel{ border-left:none; border-top:1px solid var(--line);} }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="panel">
+    <h1>Model test — build 3</h1>
+    <p class="sub">No backend, no API key. This only checks whether the model loads and whether its mouth moves.</p>
+    <div id="status"></div>
+    <div id="err"></div>
+    <div id="controls"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+window.__THREE = THREE;
+
+const MODEL_URL = 'character.glb';
+const status = document.getElementById('status');
+const controls = document.getElementById('controls');
+const errBox = document.getElementById('err');
+
+const line = (ok, text, extra='') =>
+  status.insertAdjacentHTML('beforeend',
+    `<div class="row ${ok?'ok':'bad'}"><span>${text}${extra?` <code>${extra}</code>`:''}</span></div>`);
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30,1,0.01,100);
+scene.add(new THREE.AmbientLight(0xc0b0b4,1.2));
+const key = new THREE.DirectionalLight(0xfff2e2,2.3); key.position.set(1.4,2.4,2.2); scene.add(key);
+const rim = new THREE.DirectionalLight(0x8fb9c9,1.2); rim.position.set(-2,1.4,-1.6); scene.add(rim);
+
+function resize(){
+  const w = canvas.clientWidth||1, h = canvas.clientHeight||1;
+  renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+let morphMeshes = [], zoom = 0.62, subject = null;
+
+// Same soft elliptical-gradient mouth texture as the real app
+// (frontend/src/lib/stage.js) — a flat solid-colour plane reads as a
+// rectangle glued to her face, since a mouth opening has no straight edges.
+// Draw a circular gradient on a square canvas, then stretch it into a wider
+// canvas to get an ellipse rather than fighting canvas transform math.
+function makeMouthGradientTexture() {
+  const sq = 128;
+  const square = document.createElement('canvas');
+  square.width = sq; square.height = sq;
+  const sctx = square.getContext('2d');
+  // Bias down (cy > sq/2) so the top stays lighter than the bottom — radius
+  // must stay large enough that the bias doesn't push the far edge outside
+  // the gradient entirely (that bug shrank this to a thin line: center at
+  // 0.68*sq with radius 0.58*sq put the canvas top past the gradient's own
+  // edge, already zero alpha before any "fade" started).
+  const cx = sq / 2, cy = sq * 0.55;
+  const radius = sq * 0.5;
+  const grad = sctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+  grad.addColorStop(0.0, 'rgba(20,5,5,0.95)');
+  grad.addColorStop(0.3, 'rgba(20,5,5,0.85)');
+  grad.addColorStop(0.6, 'rgba(20,5,5,0.55)');
+  grad.addColorStop(0.85, 'rgba(20,5,5,0.15)');
+  grad.addColorStop(1.0, 'rgba(20,5,5,0)');
+  sctx.fillStyle = grad;
+  sctx.fillRect(0, 0, sq, sq);
+
+  const w = 128, h = 64;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(square, 0, 0, sq, sq, 0, 0, w, h);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function frameSubject(obj, headroom){
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const c = box.getCenter(new THREE.Vector3());
+  const hgt = size.y || 1;
+  const target = new THREE.Vector3(c.x, box.min.y + hgt*headroom, c.z);
+  const dist = hgt * (headroom > 0.8 ? 0.35 : 1.15);
+  camera.position.set(target.x, target.y + hgt*0.02, target.z + dist);
+  camera.near = dist/100; camera.far = dist*20;
+  camera.lookAt(target); camera.updateProjectionMatrix();
+}
+
+new GLTFLoader().load(MODEL_URL, (gltf) => {
+  line(true, 'Model file loaded');
+
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const size = box.getSize(new THREE.Vector3());
+  line(true, 'Size', `${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`);
+
+  const bones = [], textured = [], boneNodes = {};
+  gltf.scene.traverse(o => {
+    if (o.isBone) { bones.push(o.name); boneNodes[o.name] = o; }
+    if (o.isMesh) {
+      o.frustumCulled = false;
+      if (o.material?.map) textured.push(o.name);
+      if (o.morphTargetDictionary) morphMeshes.push(o);
+    }
+  });
+
+  line(bones.length>0, `Bones found: ${bones.length}`, bones.slice(0,5).join(', '));
+  line(textured.length>0, `Textured meshes: ${textured.length}`);
+  line(morphMeshes.length>0, `Meshes with shape keys: ${morphMeshes.length}`);
+
+  scene.add(gltf.scene);
+  subject = gltf.scene;
+  frameSubject(subject, zoom);
+  resize();
+
+  // Same dark mouth-cavity plane as the real app (frontend/src/lib/stage.js) —
+  // this raw loader bypasses the Stage class entirely, so without this the
+  // mouth here will only ever show the flat lip-crease shape key with no
+  // visible opening, which reads as broken even when it isn't. Position is
+  // in Head-bone local space, measured (not guessed) the same way stage.js's
+  // copy was: the true skinned world position of the MouthOpen morph's most-
+  // displaced vertices, transformed into Head-local space.
+  let mouthDark = null, mouthOpenMesh = null, mouthOpenIdx = null;
+  let mouthDarkStatusEl = null;
+  try {
+    for (const mesh of morphMeshes) {
+      const idx = mesh.morphTargetDictionary.MouthOpen ?? mesh.morphTargetDictionary.MouthClosed;
+      if (idx !== undefined) { mouthOpenMesh = mesh; mouthOpenIdx = idx; break; }
+    }
+    if (!boneNodes.Head) throw new Error('no bone named "Head" found on this model');
+    const MOUTH_LOCAL = { x: 0.0165, y: 0.1038, z: 0.0882, width: 0.04, height: 0.02 };
+    const geo = new THREE.PlaneGeometry(MOUTH_LOCAL.width, MOUTH_LOCAL.height, 1, 1);
+    const mat = new THREE.MeshBasicMaterial({
+      map: makeMouthGradientTexture(), transparent: true, opacity: 0,
+      depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    });
+    mouthDark = new THREE.Mesh(geo, mat);
+    mouthDark.position.set(MOUTH_LOCAL.x, MOUTH_LOCAL.y, MOUTH_LOCAL.z);
+    mouthDark.renderOrder = 999;
+    mouthDark.name = 'MouthDarkProcedural';
+    boneNodes.Head.add(mouthDark);
+    status.insertAdjacentHTML('beforeend',
+      '<h2>Mouth cavity plane</h2><div class="row ok"><span>Built and attached to Head <i id="cavity-live" style="color:var(--brass)"></i></span></div>');
+    mouthDarkStatusEl = document.getElementById('cavity-live');
+  } catch (err) {
+    status.insertAdjacentHTML('beforeend',
+      `<h2>Mouth cavity plane</h2><div class="row bad"><span>Failed to build: <code>${err.message}</code></span></div>`);
+  }
+  window.__mouthDark = mouthDark;
+  window.__mouthOpenMesh = mouthOpenMesh;
+  window.__mouthOpenIdx = mouthOpenIdx;
+  function syncMouthDark() {
+    if (!mouthDark || !mouthOpenMesh) return;
+    const w = mouthOpenMesh.morphTargetInfluences[mouthOpenIdx] ?? 0;
+    const opacity = Math.max(0, (w - 0.12) / 0.88);
+    mouthDark.material.opacity = opacity;
+    if (mouthDarkStatusEl) mouthDarkStatusEl.textContent = `(live opacity: ${opacity.toFixed(2)})`;
+  }
+  syncMouthDark();
+
+  if (!morphMeshes.length){
+    errBox.textContent = 'No shape keys found. The mouth cannot move — this is your problem.';
+    return;
+  }
+
+  // A slider per shape key. If dragging one moves her mouth, the model is fine
+  // and the fault is in the voice app. If not, the fault is in the model.
+  controls.insertAdjacentHTML('beforeend','<h2>Shape keys — drag these</h2>');
+  for (const mesh of morphMeshes){
+    for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)){
+      const id = `${mesh.name}-${idx}`;
+      controls.insertAdjacentHTML('beforeend',
+        `<label><span><b>${name}</b><i id="v-${id}">0.00</i></span>
+         <input type="range" min="0" max="1" step="0.01" value="0" id="s-${id}"></label>`);
+      document.getElementById(`s-${id}`).addEventListener('input', e => {
+        const v = parseFloat(e.target.value);
+        mesh.morphTargetInfluences[idx] = v;
+        document.getElementById(`v-${id}`).textContent = v.toFixed(2);
+        syncMouthDark();
+      });
+    }
+  }
+
+  controls.insertAdjacentHTML('beforeend',
+    `<h2>Shortcuts</h2><button id="talk">auto-talk</button>
+     <button id="face">zoom to face</button><button id="body">whole body</button>`);
+
+  let talking = null;
+  document.getElementById('talk').onclick = (e) => {
+    if (talking){ clearInterval(talking); talking = null; e.target.textContent = 'auto-talk';
+      morphMeshes.forEach(m => m.morphTargetInfluences.fill(0)); syncMouthDark(); return; }
+    e.target.textContent = 'stop';
+    const t0 = performance.now();
+    talking = setInterval(() => {
+      const s = (performance.now()-t0)/1000;
+      const v = Math.max(0, Math.sin(s*6)*0.5 + 0.35 + Math.sin(s*11)*0.2);
+      for (const mesh of morphMeshes)
+        for (const idx of Object.values(mesh.morphTargetDictionary))
+          mesh.morphTargetInfluences[idx] = v;
+      syncMouthDark();
+    }, 16);
+  };
+  document.getElementById('face').onclick = () => frameSubject(subject, 0.93);
+  document.getElementById('body').onclick = () => frameSubject(subject, 0.62);
+
+}, undefined, (e) => {
+  line(false, 'Model failed to load');
+  errBox.textContent =
+    `Could not load "${MODEL_URL}".\n\n` +
+    `Most likely you opened this file directly with file:// — browsers block that.\n` +
+    `Serve the folder instead:\n\n  cd frontend/public\n  python3 -m http.server 8080\n\n` +
+    `then open http://localhost:8080/model-test.html\n\nBrowser said: ${e.message ?? e}`;
+});
+
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+resize();
+</script>
+</body>
+</html>

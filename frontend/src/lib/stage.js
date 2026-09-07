@@ -77,14 +77,37 @@ const POSES = {
       // Local-Y wrist twist turns the palm toward the viewer; the smaller
       // local-Z oscillation makes the greeting wave without flipping it away.
       rHand: [1.65 * lift, 0.34 * wag, 0.10 * wag],
+      rShoulder: [-0.015 * lift, -0.025 * lift, -0.035 * lift],
+      chestY: -0.045 * lift,
+      chestZ: -0.018 * lift,
+      headY: 0.055 * lift,
+      headZ: 0.018 * lift,
     };
   },
-  nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.16 }),
+  nod: (p) => {
+    const s = gestureEnvelope(p, 0.16, 0.24);
+    const primary = Math.sin(p * Math.PI * 2) * 0.145 * s;
+    const settle = Math.sin(p * Math.PI * 4) * 0.025 * s;
+    return {
+      headX: primary + settle,
+      neckX: (primary + settle) * 0.28,
+      chestX: Math.sin(p * Math.PI) * 0.022 * s,
+    };
+  },
   point: (p) => {
     const s = gestureEnvelope(p, 0.16, 0.26);
     // A presenter-style open-hand indication, held beside the body so the
     // hand is never hidden inside the dress or across the chest.
-    return { rUpper: [-0.05 * s, -0.35 * s, -0.38 * s], rLower: [0.04 * s, 0.05 * s, -1.52 * s], rHand: [1.48 * s, 0.12 * s, -0.04 * s] };
+    return {
+      rUpper: [-0.05 * s, -0.35 * s, -0.38 * s],
+      rLower: [0.04 * s, 0.05 * s, -1.52 * s],
+      rHand: [1.48 * s, 0.12 * s, -0.04 * s],
+      rShoulder: [-0.012 * s, -0.02 * s, -0.028 * s],
+      chestY: -0.065 * s,
+      hipsY: 0.022 * s,
+      headY: 0.05 * s,
+      headZ: 0.012 * s,
+    };
   },
   celebrate: (p) => {
     const s = gestureEnvelope(p, 0.16, 0.26);
@@ -92,7 +115,9 @@ const POSES = {
     return {
       rUpper: [-0.06 * s, -0.28 * s, -1.34 * s + b], lUpper: [0.06 * s, 0.28 * s, -1.34 * s + b],
       rLower: [0, 0.06 * s, -0.42 * s], lLower: [0, -0.06 * s, -0.42 * s],
-      rHand: [1.20 * s, 0, 0], lHand: [-1.20 * s, 0, 0], headX: -0.07 * s,
+      rHand: [1.20 * s, 0, 0], lHand: [-1.20 * s, 0, 0],
+      rShoulder: [-0.025 * s, 0, -0.045 * s], lShoulder: [0.025 * s, 0, 0.045 * s],
+      headX: -0.07 * s, chestX: -0.045 * s, hipsX: 0.018 * s,
     };
   },
 };
@@ -106,6 +131,19 @@ function speechPose(controller) {
   const beat = (controller.speechPulse ?? 0) * (0.55 + energy * 0.45);
   const side = controller.speechSide ?? 1;
   const mode = controller.speechMode ?? 0;
+  const phrase = controller.speechAge ?? 0;
+  const cadence = Math.sin(phrase * 2.35) * energy;
+  const secondary = Math.sin(phrase * 1.17 + 0.8) * energy;
+
+  const performance = {
+    neckX: beat * 0.012 + cadence * 0.006,
+    neckY: side * beat * 0.008,
+    headZ: -side * beat * 0.009 + secondary * 0.004,
+    chestX: -energy * 0.012 + beat * 0.009,
+    chestY: side * beat * 0.012 + cadence * 0.008,
+    chestZ: -side * cadence * 0.005,
+    hipsY: -side * beat * 0.005,
+  };
 
   if (mode === 0) {
     return {
@@ -115,8 +153,10 @@ function speechPose(controller) {
       rUpper: [-0.04, -0.30, -(0.20 + beat * 0.10)],
       rLower: [0.03, 0.04, -(0.92 + beat * 0.24)],
       rHand: [1.36, 0.08 + beat * 0.10, 0.02],
+      rShoulder: [-0.01 - beat * 0.008, -0.018, -0.022],
       lUpper: [0.02, 0.04, -0.06],
       headX: beat * 0.035, headY: side * beat * 0.018, spineY: -0.025,
+      ...performance,
     };
   }
   if (mode === 1) {
@@ -124,15 +164,19 @@ function speechPose(controller) {
       lUpper: [0.04, 0.30, -(0.20 + beat * 0.10)],
       lLower: [-0.03, -0.04, -(0.92 + beat * 0.24)],
       lHand: [-1.36, -(0.08 + beat * 0.10), 0.02],
+      lShoulder: [0.01 + beat * 0.008, 0.018, 0.022],
       rUpper: [-0.02, -0.04, -0.06],
       headX: beat * 0.035, headY: side * beat * 0.018, spineY: 0.025,
+      ...performance,
     };
   }
   return {
     rUpper: [-0.03, -0.25, -(0.16 + beat * 0.08)], lUpper: [0.03, 0.25, -(0.16 + beat * 0.08)],
     rLower: [0.02, 0.03, -(0.72 + beat * 0.18)], lLower: [-0.02, -0.03, -(0.72 + beat * 0.18)],
     rHand: [1.30, 0.08 + beat * 0.08, 0], lHand: [-1.30, -(0.08 + beat * 0.08), 0],
+    rShoulder: [-0.008 - beat * 0.006, -0.012, -0.018], lShoulder: [0.008 + beat * 0.006, 0.012, 0.018],
     headX: beat * 0.035, headY: side * beat * 0.014,
+    ...performance,
   };
 }
 
@@ -630,15 +674,36 @@ export class Stage {
     const semantic = c.gesture && POSES[c.gesture] ? POSES[c.gesture](c.gesturePhase) : {};
     const automatic = c.gesture ? { headX: (c.speechPulse ?? 0) * 0.025 } : speechPose(c);
 
-    // Ambient life: breathing and a slow sway, always running.
-    const breath = Math.sin(t * 1.5) * 0.018;
-    const sway = Math.sin(t * 0.45) * 0.05;
+    // Ambient life is distributed through the skeleton instead of rotating
+    // only the head and arms. Multiple low-frequency cycles keep the motion
+    // from repeating as an obvious loop while remaining calm enough for a
+    // conversational character.
+    const breath = Math.sin(t * 1.32) * 0.018;
+    const sway = Math.sin(t * 0.43) * 0.042;
+    const weight = Math.sin(t * 0.31 + 0.7);
+    const micro = Math.sin(t * 0.71 + 1.8);
 
     const base = {
       rUpper: [0, 0, breath * 0.6], lUpper: [0, 0, -breath * 0.6],
       rLower: [0, 0, 0], lLower: [0, 0, 0],
       rHand: [0, 0, 0], lHand: [0, 0, 0],
-      headX: 0, headY: sway, spineY: sway * 0.28,
+      rShoulder: [-breath * 0.16, 0, -breath * 0.18],
+      lShoulder: [breath * 0.16, 0, breath * 0.18],
+      headX: micro * 0.008,
+      headY: sway,
+      headZ: weight * 0.009,
+      neckX: -micro * 0.004,
+      neckY: sway * 0.24,
+      neckZ: -weight * 0.004,
+      spineX: breath * 0.20,
+      spineY: sway * 0.11,
+      spineZ: weight * 0.004,
+      chestX: breath * 0.52,
+      chestY: sway * 0.16,
+      chestZ: weight * 0.006,
+      hipsX: -breath * 0.08,
+      hipsY: -sway * 0.10,
+      hipsZ: -weight * 0.008,
     };
 
     const out = { ...base };
@@ -653,9 +718,12 @@ export class Stage {
     // The Blender action is densely sampled and preserves continuous motion.
     // Do the runtime equivalent with a critically damped velocity per channel.
     // Semantic gestures are a little quicker; speech and idle motion stay soft.
-    const smoothTime = c.gesture ? 0.105 : (c.speaking ? 0.155 : 0.20);
+    const armChannels = new Set(['rUpper', 'lUpper', 'rLower', 'lLower', 'rHand', 'lHand']);
     for (const key of Object.keys(out)) {
       const v = out[key];
+      const smoothTime = armChannels.has(key)
+        ? (c.gesture ? 0.11 : (c.speaking ? 0.17 : 0.28))
+        : (c.gesture ? 0.16 : (c.speaking ? 0.21 : 0.32));
       if (Array.isArray(v)) {
         const prev = this.smoothed[key] ?? [0, 0, 0];
         const velocity = this.poseVelocity[key] ?? [0, 0, 0];
@@ -684,11 +752,23 @@ export class Stage {
     set('leftUpperArm', pose.lUpper);
     set('rightLowerArm', pose.rLower);
     set('leftLowerArm', pose.lLower);
+    set('rightHand', pose.rHand);
+    set('leftHand', pose.lHand);
+    set('rightShoulder', pose.rShoulder);
+    set('leftShoulder', pose.lShoulder);
 
     const head = bone('head');
-    if (head) head.rotation.set(pose.headX ?? 0, pose.headY ?? 0, 0);
+    if (head) head.rotation.set(pose.headX ?? 0, pose.headY ?? 0, pose.headZ ?? 0);
+    const neck = bone('neck');
+    if (neck) neck.rotation.set(pose.neckX ?? 0, pose.neckY ?? 0, pose.neckZ ?? 0);
     const spine = bone('spine');
-    if (spine) spine.rotation.set(0, pose.spineY ?? 0, 0);
+    if (spine) spine.rotation.set(pose.spineX ?? 0, pose.spineY ?? 0, pose.spineZ ?? 0);
+    const chest = bone('chest');
+    if (chest) chest.rotation.set(pose.chestX ?? 0, pose.chestY ?? 0, pose.chestZ ?? 0);
+    const upperChest = bone('upperChest');
+    if (upperChest) upperChest.rotation.set((pose.chestX ?? 0) * 0.45, (pose.chestY ?? 0) * 0.55, (pose.chestZ ?? 0) * 0.55);
+    const hips = bone('hips');
+    if (hips) hips.rotation.set(pose.hipsX ?? 0, pose.hipsY ?? 0, pose.hipsZ ?? 0);
 
     const em = vrm.expressionManager;
     if (em) {
@@ -746,18 +826,29 @@ export class Stage {
     addRot(['RightHand'], pose.rHand);
     addRot(['LeftHand'], pose.lHand);
 
+    const addLocal = (names, rot) => {
+      const name = names.find((candidate) => b[candidate]);
+      const node = name ? b[name] : null;
+      const r = name ? rest[name] : null;
+      if (!node || !r || !rot) return;
+      euler.set(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0);
+      delta.setFromEuler(euler);
+      node.quaternion.copy(r).multiply(delta);
+    };
+    addLocal(['RightShoulder'], pose.rShoulder);
+    addLocal(['LeftShoulder'], pose.lShoulder);
+
     const head = b.Head;
     if (head) {
-      euler.set(pose.headX ?? 0, pose.headY ?? 0, 0);
+      euler.set(pose.headX ?? 0, pose.headY ?? 0, pose.headZ ?? 0);
       delta.setFromEuler(euler);
       head.quaternion.copy(rest.Head).multiply(delta);
     }
-    const spine = b.Spine;
-    if (spine) {
-      euler.set(0, pose.spineY ?? 0, 0);
-      delta.setFromEuler(euler);
-      spine.quaternion.copy(rest.Spine).multiply(delta);
-    }
+    addLocal(['neck', 'Neck'], [pose.neckX, pose.neckY, pose.neckZ]);
+    addLocal(['Spine'], [pose.spineX, pose.spineY, pose.spineZ]);
+    addLocal(['Spine01'], [(pose.chestX ?? 0) * 0.42, (pose.chestY ?? 0) * 0.45, (pose.chestZ ?? 0) * 0.45]);
+    addLocal(['Spine02'], [(pose.chestX ?? 0) * 0.58, (pose.chestY ?? 0) * 0.55, (pose.chestZ ?? 0) * 0.55]);
+    addLocal(['Hips'], [pose.hipsX, pose.hipsY, pose.hipsZ]);
 
     // Mouth is handled centrally in updateMouth(); see the frame loop.
   }
@@ -772,7 +863,7 @@ export class Stage {
     rot(p.armR.elbow, pose.rLower);
     rot(p.armL.elbow, pose.lLower);
 
-    p.head.rotation.set(pose.headX ?? 0, pose.headY ?? 0, 0);
+    p.head.rotation.set(pose.headX ?? 0, pose.headY ?? 0, pose.headZ ?? 0);
     p.root.rotation.y = pose.spineY ?? 0;
 
     p.mouth.scale.set(1 + c.mouth * 0.25, 0.14 + c.mouth * 1.05, 0.5);

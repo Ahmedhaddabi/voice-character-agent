@@ -174,4 +174,8 @@ export class CharacterController {
     if (!this.gesture) return 0;
     return Math.min(1, this.gestureAge / (GESTURE_DURATION[this.gesture] ?? 1.5));
   }
+
+  get speechAge() {
+    return this._speechAge;
+  }
 }

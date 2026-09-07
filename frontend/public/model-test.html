@@ -41,7 +41,7 @@
       <div class="meter">shape<b id="shape">neutral</b></div>
       <div class="meter">gesture<b id="gesture">rest</b></div>
     </div>
-    <p>One bone-driven mouth opens on each word and closes between words; hand emphasis lands on stressed words.</p>
+    <p>Layered performance test: mouth timing, semantic gestures, breathing, shoulders, chest, neck, head and weight shift all blend together.</p>
     <button id="demo">play speaking demo</button>
     <button id="body">whole body</button><button id="face">face close-up</button>
 
@@ -50,6 +50,7 @@
     <button data-shape="AA">open vowel</button><button data-shape="BMP">closed lips</button>
 
     <h2>Semantic gestures</h2>
+    <p>Click any gesture to preview it with a short talking-mouth performance.</p>
     <div id="gestures"></div>
   </aside>
 </div>
@@ -77,24 +78,32 @@ const shapes = {
 };
 
 const words = [
-  { text:'Good',       duration:0.46, shape:'OO', peak:0.55 },
+  { text:'Good',       duration:0.46, shape:'OO', peak:0.55, gesture:'wave' },
   { text:'morning.',   duration:0.62, shape:'AA', peak:0.66 },
   { text:'Let',        duration:0.34, shape:'EE', peak:0.46 },
   { text:'me',         duration:0.34, shape:'EE', peak:0.48 },
-  { text:'explain',    duration:0.64, shape:'AA', peak:0.76 },
+  { text:'explain',    duration:0.64, shape:'AA', peak:0.76, gesture:'point' },
   { text:'this',       duration:0.38, shape:'EE', peak:0.54 },
-  { text:'clearly.',   duration:0.68, shape:'EE', peak:0.68 },
+  { text:'clearly.',   duration:0.68, shape:'EE', peak:0.68, gesture:'nod' },
 ];
 const gap = 0.085;
 let demoRunning = false;
 let demoStart = 0;
 let lastWord = -1;
+let gestureTalk = null;
 let manualShape = 'AA';
 let lastFrame = performance.now();
 
+const gestureTalkDuration = {
+  wave: 1.8,
+  nod: 0.9,
+  point: 1.35,
+  celebrate: 1.55,
+};
+
 try {
-  const kind = await stage.loadModel('/character.glb?v=speech-motion-v9');
-  statusEl.textContent = `Ready — ${kind} character, production animation path`;
+  const kind = await stage.loadModel('/character.glb?v=cinematic-motion-v1');
+  statusEl.textContent = `Ready — ${kind} character, layered cinematic animation path`;
 } catch (error) {
   statusEl.textContent = `Could not load character: ${error.message ?? error}`;
   statusEl.style.color = 'var(--rose)';
@@ -115,6 +124,7 @@ document.getElementById('face').onclick = () => setCamera(true);
 
 function stopDemo() {
   demoRunning = false;
+  gestureTalk = null;
   lastWord = -1;
   demoButton.textContent = 'play speaking demo';
   demoButton.classList.remove('active');
@@ -139,13 +149,43 @@ document.querySelectorAll('[data-shape]').forEach((button) => {
     document.querySelectorAll('[data-shape]').forEach((item) => item.classList.toggle('active', item === button));
   };
 });
-openSlider.oninput = () => { if (demoRunning) stopDemo(); };
+openSlider.oninput = () => { if (demoRunning || gestureTalk) stopDemo(); };
 
 for (const name of GESTURES) {
   const button = document.createElement('button');
   button.textContent = name;
-  button.onclick = () => controller.playGesture(name);
+  button.onclick = () => {
+    stopDemo();
+    const now = performance.now();
+    gestureTalk = { name, start: now, duration: gestureTalkDuration[name] ?? 1.5 };
+    wordEl.textContent = `${name} + talking`;
+    controller.playGesture(name);
+  };
   document.getElementById('gestures').appendChild(button);
+}
+
+function gestureSpeechSample(now) {
+  if (!gestureTalk) return null;
+  const elapsed = (now - gestureTalk.start) / 1000;
+  if (elapsed >= gestureTalk.duration) {
+    gestureTalk = null;
+    wordEl.textContent = 'ready';
+    return { level:0, viseme:'neutral', ee:0, oo:0 };
+  }
+
+  // Four syllables per second with a real closure between them. Alternating
+  // broad, wide and rounded shapes keeps this preview from looking like a
+  // mechanical jaw test while leaving production lip-sync audio-driven.
+  const syllableRate = 4;
+  const cycle = elapsed * syllableRate;
+  const phase = cycle % 1;
+  const syllable = Math.floor(cycle);
+  if (phase > 0.72) return { level:0, viseme:'BMP', ee:0, oo:0 };
+  const envelope = Math.pow(Math.sin(Math.PI * phase / 0.72), 0.68);
+  const sequence = ['AA', 'EE', 'OO', 'AA'];
+  const shape = sequence[syllable % sequence.length];
+  const weights = shapes[shape];
+  return { level:0.58 * envelope, viseme:shape, ee:weights.ee, oo:weights.oo };
 }
 
 function demoSample(now) {
@@ -178,6 +218,7 @@ function animate(now) {
   lastFrame = now;
   let sample;
   if (demoRunning) sample = demoSample(now);
+  else if (gestureTalk) sample = gestureSpeechSample(now);
   else {
     const level = Number(openSlider.value);
     const weights = shapes[manualShape];
