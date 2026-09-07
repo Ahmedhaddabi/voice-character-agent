@@ -3,175 +3,193 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Model test</title>
+<title>Character speech and gesture test</title>
 <style>
-  :root { --bg:#201720; --surface:#352533; --line:#4a3646; --text:#f2e8e6; --muted:#a8949c; --brass:#c89b5a; --rose:#b8455e; --teal:#3f9a8e; }
+  :root { --bg:#201720; --surface:#352533; --line:#4a3646; --text:#f2e8e6; --muted:#b9a8af; --brass:#d2a35e; --rose:#b8455e; --teal:#57ad9f; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family:'Inter Tight',system-ui,sans-serif; font-size:14px; line-height:1.6; }
-  .wrap { display:grid; grid-template-columns:1fr 340px; height:100vh; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,system-ui,sans-serif; font-size:14px; }
+  .wrap { display:grid; grid-template-columns:minmax(0,1fr) 360px; height:100vh; }
   canvas { display:block; width:100%; height:100%; }
-  .panel { border-left:1px solid var(--line); padding:18px; overflow-y:auto; background:var(--surface); }
-  h1 { font-size:16px; font-weight:500; margin:0 0 4px; }
-  h2 { font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
-       margin:22px 0 8px; font-weight:500; }
-  .sub { color:var(--muted); font-size:12px; margin:0 0 8px; }
-  .row { display:flex; gap:8px; align-items:baseline; padding:3px 0; font-size:13px; }
-  .ok::before { content:'✓'; color:var(--teal); }
-  .bad::before { content:'✕'; color:var(--rose); }
-  code { font-size:12px; color:var(--brass); word-break:break-all; }
-  label { display:grid; grid-template-columns:1fr; gap:4px; margin:12px 0; }
-  label span { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
+  .panel { border-left:1px solid var(--line); padding:20px; overflow:auto; background:var(--surface); }
+  h1 { font-size:17px; margin:0 0 6px; font-weight:600; }
+  h2 { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:22px 0 9px; }
+  p { color:var(--muted); line-height:1.5; margin:0 0 10px; }
+  .status { color:var(--teal); margin:12px 0; }
+  .word { min-height:64px; display:grid; place-items:center; border:1px solid var(--line); border-radius:12px; font-size:26px; color:var(--brass); margin:10px 0; }
+  .meters { display:grid; grid-template-columns:1fr 1fr 1fr; gap:7px; }
+  .meter { background:#271c26; border-radius:8px; padding:8px; color:var(--muted); font-size:11px; }
+  .meter b { display:block; color:var(--text); font-size:15px; margin-top:2px; }
+  button { background:transparent; border:1px solid var(--line); border-radius:8px; color:var(--text); padding:8px 12px; font:inherit; cursor:pointer; margin:0 5px 6px 0; }
+  button:hover, button.active { border-color:var(--brass); color:var(--brass); }
   input[type=range] { width:100%; accent-color:var(--brass); }
-  button { background:transparent; border:1px solid var(--line); border-radius:8px;
-           color:var(--text); padding:8px 14px; font:inherit; font-size:13px; cursor:pointer; margin-right:6px; }
-  button:hover { border-color:var(--brass); color:var(--brass); }
-  #err { color:var(--rose); white-space:pre-wrap; font-size:12px; }
-  @media (max-width:800px){ .wrap{ grid-template-columns:1fr; grid-template-rows:50vh 1fr; }
-    .panel{ border-left:none; border-top:1px solid var(--line);} }
+  label { display:block; color:var(--muted); font-size:12px; margin:10px 0; }
+  @media (max-width:800px) { .wrap { grid-template-columns:1fr; grid-template-rows:58vh 1fr; } .panel { border-left:0; border-top:1px solid var(--line); } }
 </style>
-<script type="importmap">
-{ "imports": {
-  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
-}}
-</script>
 </head>
 <body>
 <div class="wrap">
-  <canvas id="c"></canvas>
-  <div class="panel">
-    <h1>Model test</h1>
-    <p class="sub">No backend, no API key. This only checks whether the model loads and whether its mouth moves.</p>
-    <div id="status"></div>
-    <div id="err"></div>
-    <div id="controls"></div>
-  </div>
+  <canvas id="stage"></canvas>
+  <aside class="panel">
+    <h1>Speech + gesture test</h1>
+    <p>This page now runs the same controller and renderer as the real voice app.</p>
+    <div id="status" class="status">Loading character…</div>
+
+    <h2>Word-synchronised demo</h2>
+    <div id="word" class="word">ready</div>
+    <div class="meters">
+      <div class="meter">mouth<b id="mouth">0.00</b></div>
+      <div class="meter">shape<b id="shape">neutral</b></div>
+      <div class="meter">gesture<b id="gesture">rest</b></div>
+    </div>
+    <p>One bone-driven mouth opens on each word and closes between words; hand emphasis lands on stressed words.</p>
+    <button id="demo">play speaking demo</button>
+    <button id="body">whole body</button><button id="face">face close-up</button>
+
+    <h2>Manual mouth</h2>
+    <label>Opening <input id="open" type="range" min="0" max="1" value="0" step="0.01" /></label>
+    <button data-shape="AA">open vowel</button><button data-shape="BMP">closed lips</button>
+
+    <h2>Semantic gestures</h2>
+    <div id="gestures"></div>
+  </aside>
 </div>
 
 <script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CharacterController, GESTURES } from '/src/lib/characterController.js';
+import { Stage } from '/src/lib/stage.js';
 
-const MODEL_URL = 'character.glb';
-const status = document.getElementById('status');
-const controls = document.getElementById('controls');
-const errBox = document.getElementById('err');
+const controller = new CharacterController();
+const stage = new Stage(document.getElementById('stage'), controller);
+window.__characterTest = { controller, stage };
+const statusEl = document.getElementById('status');
+const wordEl = document.getElementById('word');
+const mouthEl = document.getElementById('mouth');
+const shapeEl = document.getElementById('shape');
+const gestureEl = document.getElementById('gesture');
+const demoButton = document.getElementById('demo');
+const openSlider = document.getElementById('open');
 
-const line = (ok, text, extra='') =>
-  status.insertAdjacentHTML('beforeend',
-    `<div class="row ${ok?'ok':'bad'}"><span>${text}${extra?` <code>${extra}</code>`:''}</span></div>`);
+const shapes = {
+  AA: { ee: 0.05, oo: 0.04 },
+  EE: { ee: 0.92, oo: 0.02 },
+  OO: { ee: 0.02, oo: 0.95 },
+  BMP: { ee: 0, oo: 0 },
+};
 
-const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(30,1,0.01,100);
-scene.add(new THREE.AmbientLight(0xc0b0b4,1.2));
-const key = new THREE.DirectionalLight(0xfff2e2,2.3); key.position.set(1.4,2.4,2.2); scene.add(key);
-const rim = new THREE.DirectionalLight(0x8fb9c9,1.2); rim.position.set(-2,1.4,-1.6); scene.add(rim);
+const words = [
+  { text:'Good',       duration:0.46, shape:'OO', peak:0.55 },
+  { text:'morning.',   duration:0.62, shape:'AA', peak:0.66 },
+  { text:'Let',        duration:0.34, shape:'EE', peak:0.46 },
+  { text:'me',         duration:0.34, shape:'EE', peak:0.48 },
+  { text:'explain',    duration:0.64, shape:'AA', peak:0.76 },
+  { text:'this',       duration:0.38, shape:'EE', peak:0.54 },
+  { text:'clearly.',   duration:0.68, shape:'EE', peak:0.68 },
+];
+const gap = 0.085;
+let demoRunning = false;
+let demoStart = 0;
+let lastWord = -1;
+let manualShape = 'AA';
+let lastFrame = performance.now();
 
-function resize(){
-  const w = canvas.clientWidth||1, h = canvas.clientHeight||1;
-  renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix();
+try {
+  const kind = await stage.loadModel('/character.glb?v=speech-motion-v9');
+  statusEl.textContent = `Ready — ${kind} character, production animation path`;
+} catch (error) {
+  statusEl.textContent = `Could not load character: ${error.message ?? error}`;
+  statusEl.style.color = 'var(--rose)';
 }
-addEventListener('resize', resize);
 
-let morphMeshes = [], zoom = 0.62, subject = null;
+function setCamera(face) {
+  if (face) {
+    stage.camera.position.set(0, 1.43, 0.92);
+    stage.camera.lookAt(0, 1.43, 0);
+  } else {
+    stage.camera.position.set(0, 1.28, 2.4);
+    stage.camera.lookAt(0, 1.18, 0);
+  }
+  stage.camera.updateProjectionMatrix();
+}
+document.getElementById('body').onclick = () => setCamera(false);
+document.getElementById('face').onclick = () => setCamera(true);
 
-function frameSubject(obj, headroom){
-  const box = new THREE.Box3().setFromObject(obj);
-  const size = box.getSize(new THREE.Vector3());
-  const c = box.getCenter(new THREE.Vector3());
-  const hgt = size.y || 1;
-  const target = new THREE.Vector3(c.x, box.min.y + hgt*headroom, c.z);
-  const dist = hgt * (headroom > 0.8 ? 0.35 : 1.15);
-  camera.position.set(target.x, target.y + hgt*0.02, target.z + dist);
-  camera.near = dist/100; camera.far = dist*20;
-  camera.lookAt(target); camera.updateProjectionMatrix();
+function stopDemo() {
+  demoRunning = false;
+  lastWord = -1;
+  demoButton.textContent = 'play speaking demo';
+  demoButton.classList.remove('active');
+  wordEl.textContent = 'ready';
+  controller.interrupt();
 }
 
-new GLTFLoader().load(MODEL_URL, (gltf) => {
-  line(true, 'Model file loaded');
+demoButton.onclick = () => {
+  if (demoRunning) return stopDemo();
+  demoRunning = true;
+  demoStart = performance.now();
+  lastWord = -1;
+  demoButton.textContent = 'stop demo';
+  demoButton.classList.add('active');
+  openSlider.value = '0';
+};
 
-  const box = new THREE.Box3().setFromObject(gltf.scene);
-  const size = box.getSize(new THREE.Vector3());
-  line(true, 'Size', `${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`);
-
-  const bones = [], textured = [];
-  gltf.scene.traverse(o => {
-    if (o.isBone) bones.push(o.name);
-    if (o.isMesh) {
-      o.frustumCulled = false;
-      if (o.material?.map) textured.push(o.name);
-      if (o.morphTargetDictionary) morphMeshes.push(o);
-    }
-  });
-
-  line(bones.length>0, `Bones found: ${bones.length}`, bones.slice(0,5).join(', '));
-  line(textured.length>0, `Textured meshes: ${textured.length}`);
-  line(morphMeshes.length>0, `Meshes with shape keys: ${morphMeshes.length}`);
-
-  scene.add(gltf.scene);
-  subject = gltf.scene;
-  frameSubject(subject, zoom);
-  resize();
-
-  if (!morphMeshes.length){
-    errBox.textContent = 'No shape keys found. The mouth cannot move — this is your problem.';
-    return;
-  }
-
-  // A slider per shape key. If dragging one moves her mouth, the model is fine
-  // and the fault is in the voice app. If not, the fault is in the model.
-  controls.insertAdjacentHTML('beforeend','<h2>Shape keys — drag these</h2>');
-  for (const mesh of morphMeshes){
-    for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)){
-      const id = `${mesh.name}-${idx}`;
-      controls.insertAdjacentHTML('beforeend',
-        `<label><span><b>${name}</b><i id="v-${id}">0.00</i></span>
-         <input type="range" min="0" max="1" step="0.01" value="0" id="s-${id}"></label>`);
-      document.getElementById(`s-${id}`).addEventListener('input', e => {
-        const v = parseFloat(e.target.value);
-        mesh.morphTargetInfluences[idx] = v;
-        document.getElementById(`v-${id}`).textContent = v.toFixed(2);
-      });
-    }
-  }
-
-  controls.insertAdjacentHTML('beforeend',
-    `<h2>Shortcuts</h2><button id="talk">auto-talk</button>
-     <button id="face">zoom to face</button><button id="body">whole body</button>`);
-
-  let talking = null;
-  document.getElementById('talk').onclick = (e) => {
-    if (talking){ clearInterval(talking); talking = null; e.target.textContent = 'auto-talk';
-      morphMeshes.forEach(m => m.morphTargetInfluences.fill(0)); return; }
-    e.target.textContent = 'stop';
-    const t0 = performance.now();
-    talking = setInterval(() => {
-      const s = (performance.now()-t0)/1000;
-      const v = Math.max(0, Math.sin(s*6)*0.5 + 0.35 + Math.sin(s*11)*0.2);
-      for (const mesh of morphMeshes)
-        for (const idx of Object.values(mesh.morphTargetDictionary))
-          mesh.morphTargetInfluences[idx] = v;
-    }, 16);
+document.querySelectorAll('[data-shape]').forEach((button) => {
+  button.onclick = () => {
+    stopDemo();
+    manualShape = button.dataset.shape;
+    document.querySelectorAll('[data-shape]').forEach((item) => item.classList.toggle('active', item === button));
   };
-  document.getElementById('face').onclick = () => frameSubject(subject, 0.93);
-  document.getElementById('body').onclick = () => frameSubject(subject, 0.62);
-
-}, undefined, (e) => {
-  line(false, 'Model failed to load');
-  errBox.textContent =
-    `Could not load "${MODEL_URL}".\n\n` +
-    `Most likely you opened this file directly with file:// — browsers block that.\n` +
-    `Serve the folder instead:\n\n  cd frontend/public\n  python3 -m http.server 8080\n\n` +
-    `then open http://localhost:8080/model-test.html\n\nBrowser said: ${e.message ?? e}`;
 });
+openSlider.oninput = () => { if (demoRunning) stopDemo(); };
 
-renderer.setAnimationLoop(() => renderer.render(scene, camera));
-resize();
+for (const name of GESTURES) {
+  const button = document.createElement('button');
+  button.textContent = name;
+  button.onclick = () => controller.playGesture(name);
+  document.getElementById('gestures').appendChild(button);
+}
+
+function demoSample(now) {
+  const elapsed = (now - demoStart) / 1000;
+  let cursor = 0;
+  for (let i = 0; i < words.length; i++) {
+    const item = words[i];
+    if (elapsed >= cursor && elapsed < cursor + item.duration) {
+      const p = (elapsed - cursor) / item.duration;
+      const envelope = Math.pow(Math.sin(Math.PI * p), 0.62);
+      const level = item.shape === 'BMP' ? 0.035 : item.peak * envelope;
+      if (i !== lastWord) {
+        lastWord = i;
+        wordEl.textContent = item.text;
+        if (item.gesture) controller.playGesture(item.gesture);
+      }
+      const weights = shapes[item.shape];
+      return { level, viseme:item.shape, ee:weights.ee, oo:weights.oo };
+    }
+    cursor += item.duration;
+    if (elapsed < cursor + gap) return { level:0, viseme:'BMP', ee:0, oo:0 };
+    cursor += gap;
+  }
+  stopDemo();
+  return { level:0, viseme:'neutral', ee:0, oo:0 };
+}
+
+function animate(now) {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+  let sample;
+  if (demoRunning) sample = demoSample(now);
+  else {
+    const level = Number(openSlider.value);
+    const weights = shapes[manualShape];
+    sample = { level, viseme: level ? manualShape : 'neutral', ee:weights.ee, oo:weights.oo };
+  }
+  controller.pushAmplitude(sample, dt);
+  mouthEl.textContent = controller.mouth.toFixed(2);
+  shapeEl.textContent = controller.viseme;
+  gestureEl.textContent = controller.gesture ?? (controller.speaking ? 'speech beat' : 'rest');
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
 </script>
 </body>
 </html>

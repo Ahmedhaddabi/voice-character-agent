@@ -33,7 +33,7 @@ export function useVoiceAgent(controller) {
     }),
     tool({
       name: 'play_gesture',
-      description: 'Perform a body gesture while you speak. Use often.',
+      description: 'Perform one meaningful body gesture for the current idea. Use only when its meaning fits the words being spoken.',
       parameters: z.object({ gesture: z.enum(GESTURES) }),
       execute: async ({ gesture }) => {
         controller.playGesture(gesture);
@@ -61,12 +61,12 @@ export function useVoiceAgent(controller) {
         }
       }
 
-      const level = lip ? lip.read() : 0;
+      const sample = lip ? lip.read() : { level: 0, viseme: 'neutral', ee: 0, oo: 0 };
       if (lip?.analyser && sampleCount < 8) {
         sampleCount++;
-        console.log(`Mouth amplitude sample ${sampleCount}:`, level.toFixed(3));
+        console.log(`Speech sample ${sampleCount}:`, sample.level.toFixed(3), sample.viseme);
       }
-      controller.pushAmplitude(level, dt);
+      controller.pushAmplitude(sample, dt);
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);

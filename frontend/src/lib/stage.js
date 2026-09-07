@@ -2,55 +2,139 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-// The model is authored with her mouth CLOSED, and carries a MouthOpen shape
-// key that parts the lips. Default weight is 0, so if the morph is never
-// applied for any reason she simply stays shut — the failure mode is a calm
-// closed mouth rather than a permanent gape.
+if (import.meta.env.DEV) window.__THREE = THREE;
+
+// The model is authored with her mouth CLOSED. Newer exports carry the three
+// Blender mouth bones below; older models may still expose a MouthOpen morph.
+// Both paths consume the same controller.mouth value, so realtime audio stays
+// independent from locomotion and other baked animation clips.
 //
 // MAX_OPEN is how far she parts at peak volume.
 const MAX_OPEN = 1.0;
+const MOUTH_OPEN_BOOST = 1.22;
 // Below this the mouth is treated as fully shut, so she rests closed instead
 // of hovering a fraction open forever.
-const SILENCE_DEADZONE = 0.06;
+const SILENCE_DEADZONE = 0.025;
 // Response curve on the amplitude. 1.0 is linear; higher keeps her closer to
 // shut through ordinary speech and reserves a wide opening for loud syllables.
 // Lower it if she starts to look tight-lipped.
-const MOUTH_CURVE = 1.0;
+const MOUTH_CURVE = 0.72;
 
-// Gesture poses are expressed as bone rotation offsets in radians, so the same
-// definitions drive the placeholder figure and a real VRM rig.
-// phase runs 0..1 across the gesture.
+// Exact open-pose deltas from the Blender drivers. These are local-X offsets
+// composed on top of the exported closed/rest quaternions.
+const MOUTH_BONE_X = {
+  Mouth_Jaw: THREE.MathUtils.degToRad(4),
+  Mouth_LowerLip: THREE.MathUtils.degToRad(2),
+  Mouth_UpperLip: THREE.MathUtils.degToRad(-1),
+};
+
+function smooth01(value) {
+  const x = Math.max(0, Math.min(1, value));
+  // Quintic smootherstep: velocity and acceleration both reach zero at the
+  // ends, similar to Blender's auto-clamped handles.
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+// Critically damped motion with persistent velocity. Unlike a plain lerp it
+// does not throw velocity away every frame, so bones accelerate into a pose
+// and decelerate out of it without overshoot or a visible stop-start kink.
+function smoothDamp(current, target, velocity, smoothTime, dt) {
+  const safeTime = Math.max(0.0001, smoothTime);
+  const step = Math.min(0.05, Math.max(0.0001, dt));
+  const omega = 2 / safeTime;
+  const x = omega * step;
+  const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const change = current - target;
+  const temp = (velocity + omega * change) * step;
+  let value = target + (change + temp) * decay;
+  let nextVelocity = (velocity - omega * temp) * decay;
+  // A rapidly changing speech target can otherwise carry a tiny amount of
+  // momentum beyond its destination. Clamp that overshoot so hands never pass
+  // through a safe pose on the way to the next one.
+  if ((target - current > 0) === (value > target)) {
+    value = target;
+    nextVelocity = 0;
+  }
+  return { value, velocity: nextVelocity };
+}
+
+function gestureEnvelope(p, attack = 0.18, release = 0.22) {
+  if (p < attack) return smooth01(p / attack);
+  if (p > 1 - release) return smooth01((1 - p) / release);
+  return 1;
+}
+
+// Semantic gestures stay compact and rotate on more than one axis. This keeps
+// the elbows and palms readable without the wide, mechanical arm swings the
+// earlier single-axis poses produced.
 const POSES = {
   wave: (p) => {
-    // raise the arm up, then wave from the WRIST (rHand) side to side - this is
-    // what reads as a real wave. Forearm adds a little, wrist does the waving.
-    const lift = Math.sin(Math.min(1, p * 3) * Math.PI * 0.5);
-    const wag = Math.sin(p * 12) * lift;
+    const lift = gestureEnvelope(p, 0.20, 0.24);
+    const wag = Math.sin(p * Math.PI * 6) * lift;
     return {
-      rUpper: [0, 0, -1.4 * lift],
-      rLower: [0, 0, -0.5 * lift],
-      rHand: [0, 0, 0.5 * wag],
+      rUpper: [-0.10 * lift, -0.34 * lift, -0.70 * lift],
+      rLower: [0.08 * lift, 0.08 * lift, -1.55 * lift],
+      // Local-Y wrist twist turns the palm toward the viewer; the smaller
+      // local-Z oscillation makes the greeting wave without flipping it away.
+      rHand: [1.65 * lift, 0.34 * wag, 0.10 * wag],
     };
   },
-  nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.30 }),
-  shrug: (p) => {
-    const s = Math.sin(p * Math.PI);
-    return { rUpper: [0, 0, -0.6 * s], lUpper: [0, 0, -0.6 * s], rLower: [0, 0, -0.5 * s], lLower: [0, 0, -0.5 * s], headX: -0.10 * s };
-  },
+  nod: (p) => ({ headX: Math.sin(p * Math.PI * 2) * 0.16 }),
   point: (p) => {
-    const s = Math.sin(Math.min(1, p * 2.4) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.7) / 0.3);
-    return { rUpper: [0, -0.3, -1.0 * s], rLower: [0, 0, -0.2 * s] };
-  },
-  think: (p) => {
-    const s = Math.sin(Math.min(1, p * 2.5) * Math.PI * 0.5) * (1 - Math.max(0, p - 0.75) / 0.25);
-    return { rUpper: [0, 0, -1.6 * s], rLower: [0, 0, -1.4 * s], headX: 0.12 * s, headY: 0.18 * s };
+    const s = gestureEnvelope(p, 0.16, 0.26);
+    // A presenter-style open-hand indication, held beside the body so the
+    // hand is never hidden inside the dress or across the chest.
+    return { rUpper: [-0.05 * s, -0.35 * s, -0.38 * s], rLower: [0.04 * s, 0.05 * s, -1.52 * s], rHand: [1.48 * s, 0.12 * s, -0.04 * s] };
   },
   celebrate: (p) => {
-    const s = Math.sin(Math.min(1, p * 3) * Math.PI * 0.4);
-    const b = Math.sin(p * 12) * 0.12 * s;
-    return { rUpper: [0, 0, -1.8 * s + b], lUpper: [0, 0, -1.8 * s + b], headX: -0.12 * s };
+    const s = gestureEnvelope(p, 0.16, 0.26);
+    const b = Math.sin(p * Math.PI * 4) * 0.06 * s;
+    return {
+      rUpper: [-0.06 * s, -0.28 * s, -1.34 * s + b], lUpper: [0.06 * s, 0.28 * s, -1.34 * s + b],
+      rLower: [0, 0.06 * s, -0.42 * s], lLower: [0, -0.06 * s, -0.42 * s],
+      rHand: [1.20 * s, 0, 0], lHand: [-1.20 * s, 0, 0], headX: -0.07 * s,
+    };
   },
 };
+
+// Automatic presenter motion is driven by speech onsets. A phrase holds one
+// of three balanced poses; each stressed syllable briefly extends alternating
+// hands. It is deterministic, restrained, and directly tied to the voice.
+function speechPose(controller) {
+  if (!controller.speaking) return {};
+  const energy = controller.speechEnergy ?? 0;
+  const beat = (controller.speechPulse ?? 0) * (0.55 + energy * 0.45);
+  const side = controller.speechSide ?? 1;
+  const mode = controller.speechMode ?? 0;
+
+  if (mode === 0) {
+    return {
+      // Keep the active hand on the audience-facing side of the sleeve.
+      // Negative forearm-Z is outward on this rig; positive values bury the
+      // hand behind the torso. Each speech beat extends it a little farther.
+      rUpper: [-0.04, -0.30, -(0.20 + beat * 0.10)],
+      rLower: [0.03, 0.04, -(0.92 + beat * 0.24)],
+      rHand: [1.36, 0.08 + beat * 0.10, 0.02],
+      lUpper: [0.02, 0.04, -0.06],
+      headX: beat * 0.035, headY: side * beat * 0.018, spineY: -0.025,
+    };
+  }
+  if (mode === 1) {
+    return {
+      lUpper: [0.04, 0.30, -(0.20 + beat * 0.10)],
+      lLower: [-0.03, -0.04, -(0.92 + beat * 0.24)],
+      lHand: [-1.36, -(0.08 + beat * 0.10), 0.02],
+      rUpper: [-0.02, -0.04, -0.06],
+      headX: beat * 0.035, headY: side * beat * 0.018, spineY: 0.025,
+    };
+  }
+  return {
+    rUpper: [-0.03, -0.25, -(0.16 + beat * 0.08)], lUpper: [0.03, 0.25, -(0.16 + beat * 0.08)],
+    rLower: [0.02, 0.03, -(0.72 + beat * 0.18)], lLower: [-0.02, -0.03, -(0.72 + beat * 0.18)],
+    rHand: [1.30, 0.08 + beat * 0.08, 0], lHand: [-1.30, -(0.08 + beat * 0.08), 0],
+    headX: beat * 0.035, headY: side * beat * 0.014,
+  };
+}
 
 const EMOTION_TO_VRM = { happy: 'happy', sad: 'sad', surprised: 'surprised', curious: 'relaxed', thoughtful: 'relaxed' };
 const EMOTION_TINT = {
@@ -59,6 +143,60 @@ const EMOTION_TINT = {
 };
 
 function lerp(a, b, t) { return a + (b - a) * t; }
+
+// A uniform dark shape — no matter how soft its edges — reads as a flat
+// smudge glued onto her, because a real open mouth is not one uniform
+// colour. Her base texture already has teeth painted at the crease (visible
+// even before any of this was added); a solid plane sitting in front of it
+// with depth-testing off just paints over that detail. The fix is to give
+// the shadow internal structure instead of trying harder to hide its edges:
+// bias the gradient's centre toward the BOTTOM of the shape, so the top
+// (where the painted teeth are) stays close to fully transparent and shows
+// through on its own, and only the lower cavity — which has no useful detail
+// to preserve — actually goes dark. Built once and reused.
+let _mouthGradientTexture = null;
+function makeMouthGradientTexture() {
+  if (_mouthGradientTexture) return _mouthGradientTexture;
+
+  // Draw on a square canvas first — a radial gradient is only ever
+  // circular, so getting a wide ellipse means squashing the finished image
+  // afterward (drawImage into a wider-than-tall canvas), not fighting
+  // canvas transform math to make the gradient itself elliptical. The
+  // vertical bias (center pushed down) survives that squash unchanged,
+  // since it is a uniform scale.
+  const sq = 128;
+  const square = document.createElement('canvas');
+  square.width = sq; square.height = sq;
+  const sctx = square.getContext('2d');
+  // Bias down (cy > sq/2) so the top stays lighter than the bottom — but the
+  // radius must be large enough that the bias doesn't push the far edge
+  // outside the gradient entirely, which is what silently shrank this to a
+  // thin line last time: a center at 0.68*sq with radius 0.58*sq put the
+  // canvas top (distance 0.68*sq from center) *past* the gradient's own
+  // edge, i.e. already at zero alpha before the "fade" even started. Keep
+  // the bias modest and the radius comfortably larger than any point on the
+  // canvas can be from the center.
+  const cx = sq / 2, cy = sq * 0.55;
+  const radius = sq * 0.5;
+  const grad = sctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+  grad.addColorStop(0.0, 'rgba(20,5,5,0.95)');
+  grad.addColorStop(0.3, 'rgba(20,5,5,0.85)');
+  grad.addColorStop(0.6, 'rgba(20,5,5,0.55)');
+  grad.addColorStop(0.85, 'rgba(20,5,5,0.15)');
+  grad.addColorStop(1.0, 'rgba(20,5,5,0)');
+  sctx.fillStyle = grad;
+  sctx.fillRect(0, 0, sq, sq);
+
+  const w = 128, h = 64;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(square, 0, 0, sq, sq, 0, 0, w, h);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  _mouthGradientTexture = tex;
+  return tex;
+}
 
 const TARGET_HEIGHT = 1.65;
 
@@ -91,6 +229,7 @@ export class Stage {
     this.placeholder = null;
     this.clock = new THREE.Clock();
     this.smoothed = {};
+    this.poseVelocity = {};
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -181,7 +320,7 @@ export class Stage {
 
   clearRig() {
     if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
-    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; this.mouthDark = null; }
+    if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; this.hasMouthBones = false; this.useLegacyMouthBoneFallback = false; this.mouthDark = null; this.mouthTeeth = null; this.mouthTongue = null; this.mouthSeam = null; this.mouthMixer = null; this.mouthAction = null; this.mouthClipDuration = 0; this.mouthClipStart = 0; this.visemeMeshes = []; }
     if (this.staticModel) { this.scene.remove(this.staticModel); this.staticModel = null; }
     if (this.placeholder) { this.scene.remove(this.placeholder.root); this.placeholder = null; }
   }
@@ -224,6 +363,9 @@ export class Stage {
     const skinnedMeshes = [];
     const bones = {};
     let mouthDark = null;
+    let mouthTeeth = null;
+    let mouthTongue = null;
+    let mouthSeam = null;
     gltf.scene.traverse((o) => {
       if (o.isSkinnedMesh) skinnedMeshes.push(o);
       if (o.isBone) bones[o.name] = o;
@@ -231,7 +373,10 @@ export class Stage {
       // applyToRigged below) — it never moves on its own, it just fades in
       // as the jaw opens, so the closed-mouth look never depends on getting
       // its physical depth relative to the lips exactly right.
-      if (o.name === 'MouthDark') mouthDark = o;
+      if (o.name === 'MouthDark' || o.name === 'Mouth_Inner_FINAL' || o.name === 'Mouth_Inner_V2') mouthDark = o;
+      if (o.name === 'Mouth_UpperTeeth_V2') mouthTeeth = o;
+      if (o.name === 'Mouth_Tongue_V3') mouthTongue = o;
+      if (o.name === 'Mouth_Seam_V2') mouthSeam = o;
     });
 
     if (skinnedMeshes.length) {
@@ -240,36 +385,69 @@ export class Stage {
       this.riggedMeshes = skinnedMeshes;
       this.bones = bones;
       this.mouthDark = mouthDark;
+      this.mouthTeeth = mouthTeeth;
+      this.mouthTongue = mouthTongue;
+      this.mouthSeam = mouthSeam;
       if (this.mouthDark) {
+        // An authored MouthDark node shipped in this export — use it, same
+        // opacity-driven reveal trick as the procedural fallback below.
         const mat = this.mouthDark.material;
-        // The lower-lip shape key only recedes the skin by a centimetre or
-        // two, so relying on the depth buffer to hide this object behind
-        // closed lips and reveal it behind an open mouth is fragile (it was
-        // tried in Blender first and kept poking through at rest or staying
-        // hidden when open, depending on the mesh's own curvature at any
-        // given point). Disabling depth testing and driving pure opacity
-        // from the same mouth-open value sidesteps that entirely: at
-        // opacity 0 it is invisible regardless of what's in front of it, and
-        // when it fades in it always draws on top, so it reads correctly no
-        // matter how the jaw shape key is tuned later.
         mat.transparent = true;
-        mat.depthTest = false;
+        mat.depthTest = this.mouthDark.name === 'Mouth_Inner_V2';
         mat.depthWrite = false;
         mat.opacity = 0;
         this.mouthDark.renderOrder = 999;
-
-        // MouthDark ships mis-positioned: its centre sits at y=0.226, but her
-        // lip line is at y=0.2355 — measured in Blender by raycasting the face
-        // surface. Nine and a half millimetres low, which put it on her chin.
-        // Fading it in therefore produced a dark smear on her jaw rather than
-        // an open mouth. Shift the geometry up to meet the lips.
+        this.mouthDark.visible = true;
+      } else if (bones.Head) {
+        // No authored mouth-cavity mesh has ever survived an export of this
+        // character (checked every backup .glb — none contain a MouthDark
+        // node). Rather than depend on cutting a real hole into her face in
+        // Blender — which needs a working interior/back geometry to not show
+        // through to nothing, and has repeatedly been the hard, fragile part
+        // — build a small dark plane procedurally and park it just inside
+        // the mouth, parented to the Head bone. It does not need to deform:
+        // it only has to fade in as the jaw opens, so its own shape can be
+        // static while the lip shape key does the moving around it.
         //
-        // Translating the geometry (not the object) is deliberate: this is a
-        // skinned mesh, so its object transform is largely overridden by the
-        // skeleton, whereas a geometry offset survives skinning.
-        // Hidden: it sits on her chin (y=0.226), not her lips (y=0.2355),
-        // so fading it in only ever produced a dark smear on her jaw.
-        this.mouthDark.visible = false;
+        // MOUTH_LOCAL is in Head-bone local space. Measured directly from
+        // the live mesh, not guessed: found the vertices with the largest
+        // MouthOpen morph displacement (the lip edge) and averaged their
+        // true skinned world position (mesh.getVertexPosition, which
+        // accounts for the skeleton — a naive geometry-attribute lookup
+        // ignores skinning and is off by metres), then transformed into
+        // Head-bone local space the same way this plane is parented.
+        const MOUTH_LOCAL = { x: 0.0165, y: 0.1038, z: 0.0882, width: 0.04, height: 0.02 };
+        const geo = new THREE.PlaneGeometry(MOUTH_LOCAL.width, MOUTH_LOCAL.height, 1, 1);
+        const mat = new THREE.MeshBasicMaterial({
+          map: makeMouthGradientTexture(),
+          transparent: true,
+          opacity: 0,
+          depthTest: false,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        });
+        const dark = new THREE.Mesh(geo, mat);
+        dark.position.set(MOUTH_LOCAL.x, MOUTH_LOCAL.y, MOUTH_LOCAL.z);
+        dark.renderOrder = 999;
+        dark.name = 'MouthDarkProcedural';
+        bones.Head.add(dark);
+        this.mouthDark = dark;
+      }
+      for (const [part, initialOpacity, order, depthTest] of [
+        [this.mouthTongue, 0, 1000, true],
+        [this.mouthTeeth, 0, 1001, true],
+        [this.mouthSeam, 1, 1002, false],
+      ]) {
+        if (!part) continue;
+        const materials = Array.isArray(part.material) ? part.material : [part.material];
+        for (const mat of materials) {
+          mat.transparent = true;
+          mat.depthTest = depthTest;
+          mat.depthWrite = false;
+          mat.opacity = initialOpacity;
+        }
+        part.renderOrder = order;
+        part.visible = true;
       }
 
       // Bone orientations here are not normalized like a VRM rig: her arms
@@ -280,6 +458,27 @@ export class Stage {
       // no-op against a non-trivial rest pose.
       this.restRot = {};
       for (const name of Object.keys(bones)) this.restRot[name] = bones[name].quaternion.clone();
+      this.hasMouthBones = Object.keys(MOUTH_BONE_X).every((name) => bones[name]);
+      // Blender and glTF use different local bone bases. Applying an Euler-X
+      // delta directly in Three.js made the upper lip orbit toward the nose.
+      // The export now contains one mouth-only clip authored by Blender, so
+      // scrub that clip with speech amplitude and let Blender's converted
+      // quaternions drive the three mouth bones exactly.
+      const mouthClip = gltf.animations.find((clip) =>
+        clip.tracks.some((track) => /Mouth_(Jaw|LowerLip|UpperLip)/.test(track.name))
+      );
+      if (mouthClip) {
+        this.mouthMixer = new THREE.AnimationMixer(gltf.scene);
+        this.mouthAction = this.mouthMixer.clipAction(mouthClip);
+        this.mouthAction.setLoop(THREE.LoopOnce, 1);
+        this.mouthAction.clampWhenFinished = true;
+        this.mouthAction.play();
+        this.mouthAction.paused = false;
+        this.mouthClipDuration = mouthClip.duration;
+        this.mouthClipStart = Math.min(...mouthClip.tracks.map((track) => track.times[0] ?? 0));
+        this.mouthMixer.setTime(this.mouthClipStart);
+      }
+      this.useLegacyMouthBoneFallback = this.hasMouthBones && !mouthClip && !gltf.scene.getObjectByName('Mouth_UpperLip_V2');
       this.scene.add(gltf.scene);
       frameModel(gltf.scene);
       this.collectMouthMeshes(gltf.scene);
@@ -302,8 +501,16 @@ export class Stage {
   // before the first audio arrives.
   collectMouthMeshes(root) {
     this.mouthMeshes = [];
+    this.visemeMeshes = [];
     root.traverse((o) => {
       if (!o.isMesh || !o.morphTargetDictionary) return;
+      const ee = o.morphTargetDictionary.viseme_EE;
+      const oo = o.morphTargetDictionary.viseme_OO;
+      if (ee !== undefined || oo !== undefined) {
+        this.visemeMeshes.push({ mesh: o, ee, oo });
+        if (ee !== undefined) o.morphTargetInfluences[ee] = 0;
+        if (oo !== undefined) o.morphTargetInfluences[oo] = 0;
+      }
       const idx = o.morphTargetDictionary.MouthOpen
         ?? o.morphTargetDictionary.MouthClosed;
       if (idx === undefined) return;
@@ -316,26 +523,39 @@ export class Stage {
 
   // Drive the mouth from the smoothed volume. Runs every frame regardless of
   // which rig branch is active.
-  updateMouth() {
-    if (!this.mouthMeshes?.length) return;
+  updateMouth(dt) {
+    if (!this.mouthMeshes?.length && !this.hasMouthBones && !this.mouthAction) return;
 
     // Amplitude spends most of speech in the middle of its range, so feeding
     // it through linearly leaves her sitting half-open the whole time. The
     // exponent pushes quiet and mid-level moments back toward closed while
     // still letting loud syllables open fully — the gaps between words start
     // reading as gaps.
-    const target = Math.pow(Math.max(0, this.controller.mouth), MOUTH_CURVE);
+    // Jaw opening and lip shape are separate motions. Audio volume drives the
+    // three mouth bones almost equally for every vowel; only a closed-lip BMP
+    // consonant suppresses the opening. This keeps the lips from puckering as
+    // one solid circle while the jaw appears frozen.
+    const openness = {
+      BMP: 0.04,
+      EE: 0.95,
+      OO: 1,
+      AA: 1,
+      neutral: 0,
+    }[this.controller.viseme] ?? 0.92;
+    const target = Math.pow(Math.max(0, this.controller.mouth * openness), MOUTH_CURVE);
     const prev = this._mouthSmoothed ?? 0;
 
-    // Mouths shut faster than they open, and closing quickly is what makes
-    // speech look crisp rather than mushy.
-    const rate = target > prev ? 0.38 : 0.72;
+    // The mouth stays deliberately faster than the body so consonants remain
+    // synchronized, but uses frame-rate independent easing rather than a fixed
+    // per-frame percentage. Closing is a little faster than opening.
+    const speed = target > prev ? 21 : 32;
+    const rate = 1 - Math.exp(-Math.max(0.001, dt) * speed);
     let v = lerp(prev, target, rate);
 
     // When she is not producing audio, drive hard to shut rather than waiting
     // for the smoothing to drift there. This is the difference between lips
     // that settle closed between phrases and lips that hang slightly apart.
-    if (!this.controller.speaking) v = Math.min(v, prev * 0.45);
+    if (!this.controller.speaking) v = Math.min(v, prev * Math.exp(-Math.max(0.001, dt) * 36));
 
     // Both this and pushAmplitude smooth exponentially, so the value only
     // ever approaches zero — it never arrives. The old form also required the
@@ -345,42 +565,107 @@ export class Stage {
     if (v < SILENCE_DEADZONE) v = 0;
 
     this._mouthSmoothed = v;
-    const w = v * MAX_OPEN;
+    const w = Math.min(1, v * MOUTH_OPEN_BOOST) * MAX_OPEN;
     for (const { mesh, idx } of this.mouthMeshes) {
       mesh.morphTargetInfluences[idx] = w;
+    }
+    // The exported EE/OO morphs deform the complete overlay into a second,
+    // circular mouth. Keep them explicitly disabled: the three authored mouth
+    // bones provide one clean open/close motion and the audio still controls
+    // its timing and strength.
+    const eeWeight = 0;
+    const ooWeight = 0;
+    for (const { mesh, ee, oo } of this.visemeMeshes ?? []) {
+      if (ee !== undefined) mesh.morphTargetInfluences[ee] = eeWeight;
+      if (oo !== undefined) mesh.morphTargetInfluences[oo] = ooWeight;
+    }
+
+    // The Blender export has no MouthOpen morph: speech is a small compound
+    // rotation across jaw, lower lip, and upper lip. Apply only those local
+    // offsets; never play the bundled running clip to make the mouth move.
+    if (this.mouthAction) {
+      const end = this.mouthClipDuration * 0.999999;
+      this.mouthMixer.setTime(this.mouthClipStart + (end - this.mouthClipStart) * w);
+    } else if (this.useLegacyMouthBoneFallback) {
+      const euler = this._mouthEuler ?? (this._mouthEuler = new THREE.Euler());
+      const delta = this._mouthQuat ?? (this._mouthQuat = new THREE.Quaternion());
+      for (const [name, openX] of Object.entries(MOUTH_BONE_X)) {
+        const node = this.bones[name];
+        const rest = this.restRot[name];
+        euler.set(openX * w, 0, 0, 'XYZ');
+        delta.setFromEuler(euler);
+        node.quaternion.copy(rest).multiply(delta);
+      }
+    }
+
+    // The dark cavity plane (authored or procedural — see loadModel) has no
+    // shape key of its own; it just fades in over the same range the lips
+    // travel. Held back until the mouth is genuinely open past a sliver, so
+    // it doesn't read as a dark smudge at rest or at tiny amplitudes.
+    if (this.mouthDark) {
+      const reveal = Math.max(0, (w - 0.04) / 0.96);
+      const materials = Array.isArray(this.mouthDark.material) ? this.mouthDark.material : [this.mouthDark.material];
+      for (const mat of materials) mat.opacity = reveal;
+    }
+    if (this.mouthTeeth) {
+      const reveal = Math.max(0, (w - 0.10) / 0.90);
+      const materials = Array.isArray(this.mouthTeeth.material) ? this.mouthTeeth.material : [this.mouthTeeth.material];
+      for (const mat of materials) mat.opacity = reveal;
+    }
+    if (this.mouthTongue) {
+      const reveal = Math.max(0, (w - 0.24) / 0.76) * 0.92;
+      const materials = Array.isArray(this.mouthTongue.material) ? this.mouthTongue.material : [this.mouthTongue.material];
+      for (const mat of materials) mat.opacity = reveal;
+    }
+    if (this.mouthSeam) {
+      const reveal = Math.max(0, 1 - w * 5);
+      const materials = Array.isArray(this.mouthSeam.material) ? this.mouthSeam.material : [this.mouthSeam.material];
+      for (const mat of materials) mat.opacity = reveal;
     }
   }
 
   // Blend the current gesture pose toward the rig, whichever rig that is.
-  currentPose(t) {
+  currentPose(t, dt) {
     const c = this.controller;
-    const target = c.gesture && POSES[c.gesture] ? POSES[c.gesture](c.gesturePhase) : {};
+    const semantic = c.gesture && POSES[c.gesture] ? POSES[c.gesture](c.gesturePhase) : {};
+    const automatic = c.gesture ? { headX: (c.speechPulse ?? 0) * 0.025 } : speechPose(c);
 
     // Ambient life: breathing and a slow sway, always running.
     const breath = Math.sin(t * 1.5) * 0.018;
     const sway = Math.sin(t * 0.45) * 0.05;
-    const talkBob = c.speaking ? Math.sin(t * 7.5) * 0.03 : 0;
 
     const base = {
       rUpper: [0, 0, breath * 0.6], lUpper: [0, 0, -breath * 0.6],
       rLower: [0, 0, 0], lLower: [0, 0, 0],
-      headX: talkBob, headY: sway, spineY: sway * 0.4,
+      rHand: [0, 0, 0], lHand: [0, 0, 0],
+      headX: 0, headY: sway, spineY: sway * 0.28,
     };
 
     const out = { ...base };
-    for (const key of Object.keys(target)) {
-      const v = target[key];
-      out[key] = Array.isArray(v) ? v.map((n, i) => n + (base[key]?.[i] ?? 0)) : v + (base[key] ?? 0);
+    for (const layer of [automatic, semantic]) {
+      for (const key of Object.keys(layer)) {
+        const v = layer[key];
+        const prior = out[key] ?? (Array.isArray(v) ? [0, 0, 0] : 0);
+        out[key] = Array.isArray(v) ? v.map((n, i) => n + (prior[i] ?? 0)) : v + prior;
+      }
     }
 
-    // Smooth every channel so gestures ease in and out instead of snapping.
+    // The Blender action is densely sampled and preserves continuous motion.
+    // Do the runtime equivalent with a critically damped velocity per channel.
+    // Semantic gestures are a little quicker; speech and idle motion stay soft.
+    const smoothTime = c.gesture ? 0.105 : (c.speaking ? 0.155 : 0.20);
     for (const key of Object.keys(out)) {
       const v = out[key];
       if (Array.isArray(v)) {
         const prev = this.smoothed[key] ?? [0, 0, 0];
-        this.smoothed[key] = v.map((n, i) => lerp(prev[i], n, 0.14));
+        const velocity = this.poseVelocity[key] ?? [0, 0, 0];
+        const next = v.map((n, i) => smoothDamp(prev[i], n, velocity[i] ?? 0, smoothTime, dt));
+        this.smoothed[key] = next.map((item) => item.value);
+        this.poseVelocity[key] = next.map((item) => item.velocity);
       } else {
-        this.smoothed[key] = lerp(this.smoothed[key] ?? 0, v, 0.14);
+        const next = smoothDamp(this.smoothed[key] ?? 0, v, this.poseVelocity[key] ?? 0, smoothTime, dt);
+        this.smoothed[key] = next.value;
+        this.poseVelocity[key] = next.velocity;
       }
     }
     return this.smoothed;
@@ -407,11 +692,10 @@ export class Stage {
 
     const em = vrm.expressionManager;
     if (em) {
-      // Amplitude drives a blend of open vowels. Replace with formant analysis
-      // for per-viseme accuracy.
-      em.setValue('aa', c.mouth * 0.85);
-      em.setValue('ih', c.mouth * 0.25);
-      em.setValue('ou', c.mouth * 0.2);
+      const shaped = Math.max(c.visemeEE ?? 0, c.visemeOO ?? 0);
+      em.setValue('aa', c.mouth * (0.85 - shaped * 0.45));
+      em.setValue('ih', c.mouth * (c.visemeEE ?? 0) * 0.8);
+      em.setValue('ou', c.mouth * (c.visemeOO ?? 0) * 0.85);
       em.setValue('blink', c.blink);
       for (const name of new Set(Object.values(EMOTION_TO_VRM))) em.setValue(name, 0);
       const mapped = EMOTION_TO_VRM[c.emotion];
@@ -437,41 +721,30 @@ export class Stage {
     // components on top of that does not correspond to "rotate an extra
     // amount", so it silently produced no visible movement.
     //
-    // The "sleeve streaks at the cuff" symptom previously blamed on rough
-    // weight painting was actually a wrong-axis bug, confirmed by extracting
-    // the exported rig's own rest/posed joint quaternions (2026-08-26
-    // TAZ.glb) and checking which local axis a known-good bend (Blender's
-    // own baked wave — a clean, natural arm raise, no streaking) rotates
-    // around: it's local X, not Z. POSES.wave/shrug/point/think/celebrate
-    // put their bend value in rUpper[2]/rLower[2] (index 2, "Z") because they
-    // were written for a VRM-normalized humanoid bone space, a different
-    // skeleton convention from this hand-rigged one. Feeding that Z-slot
-    // value straight into this rig's Euler Z rotated the forearm mostly
-    // around its own roll/twist axis instead of bending it — that twist
-    // against the cloth is what read as streaking, not fragile weighting.
-    // Remapping index 2 -> local X (the verified bend axis) fixes the actual
-    // rotation direction. Verified in Blender up to POSES' full combined
-    // peak (~150 deg shoulder+elbow) with no mesh damage, but that peak
-    // reads as a fairly exaggerated swing on this character's proportions,
-    // so ARM_SCALE is set to a visibly large-but-not-maxed value rather than
-    // 1.0 — nudge it once you've seen it live.
+    // Blender MCP measurement of this exact export shows that both arm bones
+    // use positive local X to move from their authored T-pose to a relaxed
+    // down pose. Forearm negative local X then bends the hand back up toward
+    // the listener. The pose arrays keep their portable VRM-style slots and
+    // are remapped here for this hand-authored skeleton.
     const ARM_SCALE = 1.0;
-    const addRot = (name, rot) => {
-      const node = b[name];
-      const r = rest[name];
+    const addRot = (names, rot, localXBase = 0) => {
+      const name = names.find((candidate) => b[candidate]);
+      const node = name ? b[name] : null;
+      const r = name ? rest[name] : null;
       if (!node || !r || !rot) return;
-      euler.set(rot[2] * ARM_SCALE, rot[0] * ARM_SCALE, rot[1] * ARM_SCALE);
+      euler.set((localXBase + rot[2]) * ARM_SCALE, rot[0] * ARM_SCALE, rot[1] * ARM_SCALE);
       delta.setFromEuler(euler);
       node.quaternion.copy(r).multiply(delta);
     };
-    // GLTFLoader strips '.' from node names (it uses '.' as the separator in
-    // animation track paths), so "UpperArm.R" in the file becomes "UpperArmR".
-    addRot('UpperArmR', pose.rUpper);
-    addRot('UpperArmL', pose.lUpper);
-    addRot('ForeArmR', pose.rLower);
-    addRot('ForeArmL', pose.lLower);
-    addRot('RightHand', pose.rHand);
-    addRot('LeftHand', pose.lHand);
+    // V8 uses RightArm/LeftArm; older backups used UpperArmR/UpperArmL.
+    // Supporting both avoids silently losing all movement when exports differ.
+    const RELAXED_ARM_DROP = 1.12;
+    addRot(['RightArm', 'UpperArmR'], pose.rUpper, RELAXED_ARM_DROP);
+    addRot(['LeftArm', 'UpperArmL'], pose.lUpper, RELAXED_ARM_DROP);
+    addRot(['RightForeArm', 'ForeArmR'], pose.rLower);
+    addRot(['LeftForeArm', 'ForeArmL'], pose.lLower);
+    addRot(['RightHand'], pose.rHand);
+    addRot(['LeftHand'], pose.lHand);
 
     const head = b.Head;
     if (head) {
@@ -525,9 +798,9 @@ export class Stage {
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
     this.controller.tick(dt);
-    const pose = this.currentPose(t);
+    const pose = this.currentPose(t, dt);
 
-    this.updateMouth();
+    this.updateMouth(dt);
 
     if (this.vrm) this.applyToVRM(pose, dt);
     else if (this.riggedMeshes) this.applyToRigged(pose);

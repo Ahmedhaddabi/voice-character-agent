@@ -18,6 +18,7 @@ export default function CharacterStage({ controller, speaking }) {
   useEffect(() => {
     const stage = new Stage(canvasRef.current, controller);
     stageRef.current = stage;
+    if (import.meta.env.DEV) window.__stage = stage;
 
     // Whatever sits in public/ loads on open. A rigged VRM wins if both exist.
     //
@@ -32,7 +33,7 @@ export default function CharacterStage({ controller, speaking }) {
     const cacheBust = `?v=${Date.now()}`;
     (async () => {
       const failures = [];
-      for (const url of ['/character.vrm', '/character.glb']) {
+      for (const url of ['/character.vrm', '/character.glb?v=bone-mouth-v15']) {
         try {
           setRig(await stage.loadModel(url + cacheBust));
           return;
