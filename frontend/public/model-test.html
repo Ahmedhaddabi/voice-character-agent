@@ -166,7 +166,11 @@ for (const name of GESTURES) {
 
 function gestureSpeechSample(now) {
   if (!gestureTalk) return null;
-  const elapsed = (now - gestureTalk.start) / 1000;
+  // A requestAnimationFrame callback that was queued before the click may
+  // carry a timestamp a few milliseconds older than performance.now() from
+  // the click handler. Clamp that first frame so it cannot create a negative
+  // syllable index and stop the animation loop.
+  const elapsed = Math.max(0, (now - gestureTalk.start) / 1000);
   if (elapsed >= gestureTalk.duration) {
     gestureTalk = null;
     wordEl.textContent = 'ready';
