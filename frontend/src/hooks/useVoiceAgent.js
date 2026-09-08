@@ -6,12 +6,16 @@ import { EMOTIONS, GESTURES } from '../lib/characterController';
 import { LipSync } from '../lib/lipSync';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
+const SHOW_LIP_DEBUG = import.meta.env.DEV
+  && typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).has('lipDebug');
 
 export function useVoiceAgent(controller) {
   const [status, setStatus] = useState('idle'); // idle | connecting | live | error
   const [error, setError] = useState(null);
   const [transcript, setTranscript] = useState([]);
   const [muted, setMuted] = useState(false);
+  const [lipDebug, setLipDebug] = useState(null);
 
   const sessionRef = useRef(null);
   const audioElRef = useRef(null);
@@ -46,6 +50,7 @@ export function useVoiceAgent(controller) {
     let last = performance.now();
     let attachLogged = false;
     let sampleCount = 0;
+    let lastDebugAt = 0;
     const step = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -67,6 +72,10 @@ export function useVoiceAgent(controller) {
         console.log(`Speech sample ${sampleCount}:`, sample.level.toFixed(3), sample.viseme);
       }
       controller.pushAmplitude(sample, dt);
+      if (SHOW_LIP_DEBUG && now - lastDebugAt > 100) {
+        lastDebugAt = now;
+        setLipDebug(lip?.diagnostics ?? null);
+      }
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
@@ -111,6 +120,9 @@ export function useVoiceAgent(controller) {
         tools: buildTools(),
       });
 
+      const lipSync = new LipSync();
+      lipSyncRef.current = lipSync;
+
       const session = new RealtimeSession(agent, {
         model,
         transport: new OpenAIRealtimeWebRTC({ audioElement: audioEl, mediaStream: micStream }),
@@ -127,7 +139,18 @@ export function useVoiceAgent(controller) {
         },
       });
 
-      session.on('audio_interrupted', () => controller.interrupt());
+      session.on('audio_start', () => lipSync.beginUtterance());
+      session.on('audio_stopped', () => lipSync.endUtterance());
+      session.on('audio_interrupted', () => {
+        lipSync.interrupt();
+        controller.interrupt();
+      });
+      // WebRTC carries the audible response while the transport emits the
+      // model's streaming transcript. It is used only as a shape hint; the
+      // waveform remains responsible for exact mouth timing.
+      session.transport.on('audio_transcript_delta', ({ delta }) => {
+        lipSync.enqueueTranscript(delta);
+      });
       session.on('error', (e) => {
         console.error('Realtime session error:', e);
         setError(e?.error?.message ?? 'The session hit an error.');
@@ -151,7 +174,6 @@ export function useVoiceAgent(controller) {
       await session.connect({ apiKey: clientSecret });
 
       sessionRef.current = session;
-      lipSyncRef.current = new LipSync();
       controller.setListening(true);
       setStatus('live');
       startLoop();
@@ -159,6 +181,8 @@ export function useVoiceAgent(controller) {
       console.error('Failed to connect:', err);
       micStreamRef.current?.getTracks().forEach((track) => track.stop());
       micStreamRef.current = null;
+      lipSyncRef.current?.close();
+      lipSyncRef.current = null;
       setError(err.message ?? String(err));
       setStatus('error');
     }
@@ -171,6 +195,7 @@ export function useVoiceAgent(controller) {
     sessionRef.current = null;
     lipSyncRef.current?.close();
     lipSyncRef.current = null;
+    setLipDebug(null);
     audioElRef.current?.remove();
     audioElRef.current = null;
     micStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -192,5 +217,5 @@ export function useVoiceAgent(controller) {
 
   useEffect(() => () => disconnect(), [disconnect]);
 
-  return { status, error, transcript, muted, connect, disconnect, toggleMute };
+  return { status, error, transcript, muted, lipDebug, connect, disconnect, toggleMute };
 }

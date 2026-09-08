@@ -13,7 +13,7 @@ const STATUS_COPY = {
 
 export default function App() {
   const controller = useMemo(() => new CharacterController(), []);
-  const { status, error, transcript, muted, connect, disconnect, toggleMute } = useVoiceAgent(controller);
+  const { status, error, transcript, muted, lipDebug, connect, disconnect, toggleMute } = useVoiceAgent(controller);
   const [anim, setAnim] = useState({ speaking: false, emotion: 'neutral', gesture: null });
   const scrollRef = useRef(null);
 
@@ -65,6 +65,26 @@ export default function App() {
               ))}
             </div>
           </div>
+
+          {lipDebug && (
+            <div className="side__debug lip-debug" aria-label="Live lip-sync diagnostics">
+              <div className="lip-debug__row">
+                <span className="side__label">Live lip-sync</span>
+                <span className={`lip-debug__state ${lipDebug.attached ? 'is-ready' : ''}`}>
+                  {lipDebug.attached ? 'audio ready' : 'waiting for audio'}
+                </span>
+              </div>
+              <div className="lip-debug__meter" aria-hidden="true">
+                <i style={{ transform: `scaleX(${lipDebug.level ?? 0})` }} />
+              </div>
+              <div className="lip-debug__values">
+                <span>shape <strong>{lipDebug.viseme}</strong></span>
+                <span>word hint <strong>{lipDebug.hint}</strong></span>
+                <span>level <strong>{(lipDebug.level ?? 0).toFixed(2)}</strong></span>
+                <span>queued <strong>{lipDebug.queueDepth ?? 0}</strong></span>
+              </div>
+            </div>
+          )}
         </aside>
       </main>
 

@@ -45,9 +45,17 @@
     <button id="demo">play speaking demo</button>
     <button id="body">whole body</button><button id="face">face close-up</button>
 
+    <h2>Facial acting</h2>
+    <button id="blink">blink</button><div id="emotions"></div>
+
     <h2>Manual mouth</h2>
     <label>Opening <input id="open" type="range" min="0" max="1" value="0" step="0.01" /></label>
-    <button data-shape="AA">open vowel</button><button data-shape="BMP">closed lips</button>
+    <div id="viseme-buttons">
+      <button data-shape="AA">A / AH</button><button data-shape="EE">E / EE</button>
+      <button data-shape="OO">O</button><button data-shape="UW">U / W</button>
+      <button data-shape="FV">F / V</button><button data-shape="LTH">L / TH</button>
+      <button data-shape="SZ">S / Z</button><button data-shape="BMP">M / B / P</button>
+    </div>
 
     <h2>Semantic gestures</h2>
     <p>Click any gesture to preview it with a short talking-mouth performance.</p>
@@ -56,8 +64,8 @@
 </div>
 
 <script type="module">
-import { CharacterController, GESTURES } from '/src/lib/characterController.js';
-import { Stage } from '/src/lib/stage.js';
+import { CharacterController, EMOTIONS, GESTURES } from '/src/lib/characterController.js?v=blink-v12b';
+import { Stage } from '/src/lib/stage.js?v=blink-v12b';
 
 const controller = new CharacterController();
 const stage = new Stage(document.getElementById('stage'), controller);
@@ -71,20 +79,24 @@ const demoButton = document.getElementById('demo');
 const openSlider = document.getElementById('open');
 
 const shapes = {
-  AA: { ee: 0.05, oo: 0.04 },
-  EE: { ee: 0.92, oo: 0.02 },
-  OO: { ee: 0.02, oo: 0.95 },
-  BMP: { ee: 0, oo: 0 },
+  AA:  { ee:0.04, oo:0.02, weights:{ AA:1 } },
+  EE:  { ee:0.94, oo:0.01, weights:{ EE:1 } },
+  OO:  { ee:0.01, oo:0.95, weights:{ OO:1 } },
+  UW:  { ee:0.01, oo:0.98, weights:{ UW:1 } },
+  FV:  { ee:0.24, oo:0.01, weights:{ FV:1 } },
+  LTH: { ee:0.18, oo:0.03, weights:{ LTH:1 } },
+  SZ:  { ee:0.42, oo:0.01, weights:{ SZ:1 } },
+  BMP: { ee:0, oo:0, weights:{ BMP:1 } },
 };
 
 const words = [
-  { text:'Good',       duration:0.46, shape:'OO', peak:0.55, gesture:'wave' },
-  { text:'morning.',   duration:0.62, shape:'AA', peak:0.66 },
-  { text:'Let',        duration:0.34, shape:'EE', peak:0.46 },
-  { text:'me',         duration:0.34, shape:'EE', peak:0.48 },
-  { text:'explain',    duration:0.64, shape:'AA', peak:0.76, gesture:'point' },
-  { text:'this',       duration:0.38, shape:'EE', peak:0.54 },
-  { text:'clearly.',   duration:0.68, shape:'EE', peak:0.68, gesture:'nod' },
+  { text:'Good',       duration:0.46, shapes:['UW','SZ'], peak:0.55, gesture:'wave' },
+  { text:'morning.',   duration:0.62, shapes:['BMP','OO','LTH'], peak:0.66 },
+  { text:'Let',        duration:0.34, shapes:['LTH','EE'], peak:0.46 },
+  { text:'me',         duration:0.34, shapes:['BMP','EE'], peak:0.48 },
+  { text:'explain',    duration:0.64, shapes:['EE','SZ','BMP','LTH','AA'], peak:0.76, gesture:'point' },
+  { text:'this',       duration:0.38, shapes:['LTH','EE','SZ'], peak:0.54 },
+  { text:'clearly.',   duration:0.68, shapes:['SZ','LTH','EE'], peak:0.68, gesture:'nod' },
 ];
 const gap = 0.085;
 let demoRunning = false;
@@ -102,7 +114,7 @@ const gestureTalkDuration = {
 };
 
 try {
-  const kind = await stage.loadModel('/character.glb?v=red-lipstick-v9-new');
+  const kind = await stage.loadModel('/character.glb?v=hybrid-visemes-v10');
   statusEl.textContent = `Ready — ${kind} character, layered cinematic animation path`;
 } catch (error) {
   statusEl.textContent = `Could not load character: ${error.message ?? error}`;
@@ -110,17 +122,20 @@ try {
 }
 
 function setCamera(face) {
-  if (face) {
-    stage.camera.position.set(0, 1.43, 0.92);
-    stage.camera.lookAt(0, 1.43, 0);
-  } else {
-    stage.camera.position.set(0, 1.28, 2.4);
-    stage.camera.lookAt(0, 1.18, 0);
-  }
-  stage.camera.updateProjectionMatrix();
+  stage.setCameraMode(face ? 'face' : 'body');
 }
 document.getElementById('body').onclick = () => setCamera(false);
 document.getElementById('face').onclick = () => setCamera(true);
+document.getElementById('blink').onclick = () => controller.blinkNow();
+for (const emotion of EMOTIONS) {
+  const button = document.createElement('button');
+  button.textContent = emotion;
+  button.onclick = () => {
+    controller.setEmotion(emotion);
+    document.querySelectorAll('#emotions button').forEach((item) => item.classList.toggle('active', item === button));
+  };
+  document.getElementById('emotions').appendChild(button);
+}
 
 function stopDemo() {
   demoRunning = false;
@@ -186,10 +201,10 @@ function gestureSpeechSample(now) {
   const syllable = Math.floor(cycle);
   if (phase > 0.72) return { level:0, viseme:'BMP', ee:0, oo:0 };
   const envelope = Math.pow(Math.sin(Math.PI * phase / 0.72), 0.68);
-  const sequence = ['AA', 'EE', 'OO', 'AA'];
+  const sequence = ['AA', 'EE', 'UW', 'FV', 'LTH', 'SZ', 'OO'];
   const shape = sequence[syllable % sequence.length];
   const weights = shapes[shape];
-  return { level:0.58 * envelope, viseme:shape, ee:weights.ee, oo:weights.oo };
+  return { level:0.58 * envelope, viseme:shape, ee:weights.ee, oo:weights.oo, weights:weights.weights };
 }
 
 function demoSample(now) {
@@ -200,14 +215,15 @@ function demoSample(now) {
     if (elapsed >= cursor && elapsed < cursor + item.duration) {
       const p = (elapsed - cursor) / item.duration;
       const envelope = Math.pow(Math.sin(Math.PI * p), 0.62);
-      const level = item.shape === 'BMP' ? 0.035 : item.peak * envelope;
+      const shape = item.shapes[Math.min(item.shapes.length - 1, Math.floor(p * item.shapes.length))];
+      const level = shape === 'BMP' ? 0.035 : item.peak * envelope;
       if (i !== lastWord) {
         lastWord = i;
         wordEl.textContent = item.text;
         if (item.gesture) controller.playGesture(item.gesture);
       }
-      const weights = shapes[item.shape];
-      return { level, viseme:item.shape, ee:weights.ee, oo:weights.oo };
+      const weights = shapes[shape];
+      return { level, viseme:shape, ee:weights.ee, oo:weights.oo, weights:weights.weights };
     }
     cursor += item.duration;
     if (elapsed < cursor + gap) return { level:0, viseme:'BMP', ee:0, oo:0 };
@@ -226,7 +242,7 @@ function animate(now) {
   else {
     const level = Number(openSlider.value);
     const weights = shapes[manualShape];
-    sample = { level, viseme: level ? manualShape : 'neutral', ee:weights.ee, oo:weights.oo };
+    sample = { level, viseme: level ? manualShape : 'neutral', ee:weights.ee, oo:weights.oo, weights:level ? weights.weights : {} };
   }
   controller.pushAmplitude(sample, dt);
   mouthEl.textContent = controller.mouth.toFixed(2);

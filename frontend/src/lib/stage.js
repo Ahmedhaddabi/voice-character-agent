@@ -20,6 +20,31 @@ const SILENCE_DEADZONE = 0.025;
 // Lower it if she starts to look tight-lipped.
 const MOUTH_CURVE = 0.72;
 
+const VISEME_MORPHS = {
+  AA: 'viseme_AA',
+  EE: 'viseme_EE',
+  OO: 'viseme_OO',
+  UW: 'viseme_UW',
+  FV: 'viseme_FV',
+  LTH: 'viseme_LTH',
+  SZ: 'viseme_SZ',
+  BMP: 'viseme_BMP',
+};
+
+// Morphs shape the lips; the Blender mouth clip continues to provide jaw
+// separation. Keeping the strengths below one makes neighboring phonemes
+// blend naturally instead of turning the overlay into a second hard outline.
+const VISEME_STRENGTH = {
+  AA: 0.42,
+  EE: 0.62,
+  OO: 0.74,
+  UW: 0.78,
+  FV: 0.72,
+  LTH: 0.78,
+  SZ: 0.68,
+  BMP: 0.70,
+};
+
 // Exact open-pose deltas from the Blender drivers. These are local-X offsets
 // composed on top of the exported closed/rest quaternions.
 const MOUTH_BONE_X = {
@@ -186,7 +211,38 @@ const EMOTION_TINT = {
   thoughtful: 0xc4c0cf, surprised: 0xf2d6c4, sad: 0xb9c2cd,
 };
 
+const EMOTION_POSE = {
+  neutral: {},
+  happy: { headX: -0.018, headZ: 0.010, chestX: -0.008 },
+  curious: { headY: 0.022, headZ: 0.050, neckZ: -0.014 },
+  thoughtful: { headX: 0.028, headY: -0.030, headZ: -0.018, neckY: 0.012 },
+  surprised: { headX: -0.032, chestX: -0.012, rShoulder: [-0.012, 0, -0.012], lShoulder: [0.012, 0, 0.012] },
+  sad: { headX: 0.040, headZ: -0.025, neckX: 0.012, chestX: 0.018 },
+};
+
 function lerp(a, b, t) { return a + (b - a) * t; }
+
+function makeBackdropTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  const vertical = ctx.createLinearGradient(0, 0, 0, 512);
+  vertical.addColorStop(0, '#160f19');
+  vertical.addColorStop(0.58, '#281824');
+  vertical.addColorStop(1, '#100b12');
+  ctx.fillStyle = vertical;
+  ctx.fillRect(0, 0, 512, 512);
+  const halo = ctx.createRadialGradient(265, 205, 18, 265, 205, 250);
+  halo.addColorStop(0, 'rgba(145,78,82,0.34)');
+  halo.addColorStop(0.45, 'rgba(83,48,69,0.22)');
+  halo.addColorStop(1, 'rgba(17,10,18,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, 512, 512);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
 
 // A uniform dark shape — no matter how soft its edges — reads as a flat
 // smudge glued onto her, because a real open mouth is not one uniform
@@ -274,23 +330,44 @@ export class Stage {
     this.clock = new THREE.Clock();
     this.smoothed = {};
     this.poseVelocity = {};
+    this.faceControls = null;
+    this.cameraMode = 'body';
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(28, 1, 0.1, 40);
     this.camera.position.set(0, 1.28, 2.4);
     this.camera.lookAt(0, 1.18, 0);
+    this.cameraModes = {
+      body: { position: new THREE.Vector3(0, 1.28, 2.40), look: new THREE.Vector3(0, 1.18, 0) },
+      face: { position: new THREE.Vector3(0, 1.43, 0.92), look: new THREE.Vector3(0, 1.43, 0) },
+    };
+    this._cameraLook = this.cameraModes.body.look.clone();
 
-    const key = new THREE.DirectionalLight(0xfff2e2, 2.1);
-    key.position.set(1.4, 2.4, 2.2);
+    const backdrop = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.5, 3.6),
+      new THREE.MeshBasicMaterial({ map: makeBackdropTexture(), depthWrite: false, fog: false }),
+    );
+    backdrop.position.set(0, 1.30, -1.30);
+    backdrop.renderOrder = -100;
+    this.backdrop = backdrop;
+    this.scene.add(backdrop);
+
+    const key = new THREE.DirectionalLight(0xffe2c8, 2.35);
+    key.position.set(-1.6, 2.5, 2.6);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x8fb9c9, 1.1);
-    rim.position.set(-2, 1.4, -1.6);
+    const fill = new THREE.DirectionalLight(0x9cc8db, 0.72);
+    fill.position.set(1.8, 1.5, 2.0);
+    this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xf08b78, 1.65);
+    rim.position.set(1.2, 2.0, -2.2);
     this.scene.add(rim);
-    this.scene.add(new THREE.AmbientLight(0xb9a6ad, 1.0));
+    this.scene.add(new THREE.HemisphereLight(0xffe8d8, 0x221626, 0.82));
 
     this.buildPlaceholder();
     this.resize();
@@ -363,10 +440,101 @@ export class Stage {
   }
 
   clearRig() {
+    this.clearFaceControls();
     if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
     if (this.riggedScene) { this.scene.remove(this.riggedScene); this.riggedScene = null; this.riggedMeshes = null; this.bones = null; this.restRot = null; this.hasMouthBones = false; this.useLegacyMouthBoneFallback = false; this.mouthDark = null; this.mouthTeeth = null; this.mouthTongue = null; this.mouthSeam = null; this.mouthMixer = null; this.mouthAction = null; this.mouthClipDuration = 0; this.mouthClipStart = 0; this.visemeMeshes = []; }
     if (this.staticModel) { this.scene.remove(this.staticModel); this.staticModel = null; }
     if (this.placeholder) { this.scene.remove(this.placeholder.root); this.placeholder = null; }
+  }
+
+  clearFaceControls() {
+    if (!this.faceControls) return;
+    for (const item of [...this.faceControls.lids, ...this.faceControls.lashes]) {
+      this.scene.remove(item);
+      item.geometry.dispose();
+      item.material.dispose();
+    }
+    this.faceControls = null;
+  }
+
+  buildRiggedFaceControls() {
+    this.clearFaceControls();
+    const anchor = this.bones?.headfront ?? this.bones?.Head;
+    const head = this.bones?.Head;
+    if (!anchor || !head) return;
+    const lids = [];
+    const lashes = [];
+    for (const side of [-1, 1]) {
+      const lid = new THREE.Mesh(
+        new THREE.CircleGeometry(0.5, 28),
+        new THREE.MeshBasicMaterial({ color: 0xb88467, transparent: true, opacity: 0, depthTest: false, depthWrite: false }),
+      );
+      lid.renderOrder = 1100;
+      lid.userData.eyeSide = side;
+      this.scene.add(lid);
+      lids.push(lid);
+
+      const lash = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.036, 0.0018),
+        new THREE.MeshBasicMaterial({ color: 0x3c2021, transparent: true, opacity: 0, depthTest: false, depthWrite: false }),
+      );
+      lash.renderOrder = 1101;
+      lash.userData.eyeSide = side;
+      this.scene.add(lash);
+      lashes.push(lash);
+    }
+    this.faceControls = { anchor, head, lids, lashes };
+  }
+
+  updateRiggedFaceControls() {
+    const controls = this.faceControls;
+    if (!controls) return;
+    const blink = Math.max(0, Math.min(1, this.controller.blink ?? 0));
+    const anchor = controls.anchor.getWorldPosition(this._faceAnchor ?? (this._faceAnchor = new THREE.Vector3()));
+    const headQuat = controls.head.getWorldQuaternion(this._faceQuat ?? (this._faceQuat = new THREE.Quaternion()));
+    const right = (this._faceRight ?? (this._faceRight = new THREE.Vector3())).set(1, 0, 0).applyQuaternion(headQuat);
+    const up = (this._faceUp ?? (this._faceUp = new THREE.Vector3())).set(0, 1, 0).applyQuaternion(headQuat);
+    const forward = (this._faceForward ?? (this._faceForward = new THREE.Vector3())).set(0, 0, 1).applyQuaternion(headQuat);
+    for (let i = 0; i < controls.lids.length; i++) {
+      const side = controls.lids[i].userData.eyeSide;
+      const lidHeight = 0.080 + (1 - blink) * 0.010 - blink * 0.012;
+      const centre = anchor.clone()
+        .addScaledVector(right, side * 0.036)
+        .addScaledVector(up, lidHeight)
+        .addScaledVector(forward, 0.010);
+      const lid = controls.lids[i];
+      lid.position.copy(centre);
+      lid.quaternion.copy(this.camera.quaternion);
+      lid.scale.set(0.038, Math.max(0.0003, 0.030 * blink), 1);
+      lid.material.opacity = blink > 0.015 ? 0.98 : 0;
+
+      const lash = controls.lashes[i];
+      lash.position.copy(anchor).addScaledVector(right, side * 0.036).addScaledVector(up, 0.068).addScaledVector(forward, 0.012);
+      lash.quaternion.copy(this.camera.quaternion);
+      lash.material.opacity = Math.max(0, (blink - 0.62) / 0.38) * 0.9;
+    }
+  }
+
+  setCameraMode(mode) {
+    if (this.cameraModes[mode]) this.cameraMode = mode;
+  }
+
+  updateCamera(t, dt) {
+    const mode = this.cameraModes[this.cameraMode] ?? this.cameraModes.body;
+    const speaking = this.controller.speaking ? 1 : 0;
+    const driftScale = this.cameraMode === 'face' ? 0.36 : 1;
+    const targetPosition = (this._cameraPositionTarget ?? (this._cameraPositionTarget = new THREE.Vector3())).copy(mode.position);
+    targetPosition.x += (Math.sin(t * 0.23) * 0.010 + Math.sin(t * 0.61 + 1.1) * 0.004) * driftScale;
+    targetPosition.y += Math.sin(t * 0.19 + 0.4) * 0.006 * driftScale;
+    targetPosition.z -= speaking * (this.cameraMode === 'face' ? 0.010 : 0.030);
+    const follow = 1 - Math.exp(-Math.max(0.001, dt) * 3.6);
+    this.camera.position.lerp(targetPosition, follow);
+
+    const targetLook = (this._cameraLookTarget ?? (this._cameraLookTarget = new THREE.Vector3())).copy(mode.look);
+    targetLook.x += Math.sin(t * 0.27 + 0.8) * 0.004 * driftScale;
+    targetLook.y += speaking * 0.006;
+    this._cameraLook.lerp(targetLook, follow);
+    this.camera.lookAt(this._cameraLook);
   }
 
   // Handles a VRM, a plain GLB rigged by hand (skeleton + morph targets but no
@@ -525,6 +693,8 @@ export class Stage {
       this.useLegacyMouthBoneFallback = this.hasMouthBones && !mouthClip && !gltf.scene.getObjectByName('Mouth_UpperLip_V2');
       this.scene.add(gltf.scene);
       frameModel(gltf.scene);
+      gltf.scene.updateMatrixWorld(true);
+      this.buildRiggedFaceControls();
       this.collectMouthMeshes(gltf.scene);
       return 'rigged';
     }
@@ -548,12 +718,16 @@ export class Stage {
     this.visemeMeshes = [];
     root.traverse((o) => {
       if (!o.isMesh || !o.morphTargetDictionary) return;
-      const ee = o.morphTargetDictionary.viseme_EE;
-      const oo = o.morphTargetDictionary.viseme_OO;
-      if (ee !== undefined || oo !== undefined) {
-        this.visemeMeshes.push({ mesh: o, ee, oo });
-        if (ee !== undefined) o.morphTargetInfluences[ee] = 0;
-        if (oo !== undefined) o.morphTargetInfluences[oo] = 0;
+      const morphs = {};
+      for (const [name, morphName] of Object.entries(VISEME_MORPHS)) {
+        const index = o.morphTargetDictionary[morphName];
+        if (index !== undefined) {
+          morphs[name] = index;
+          o.morphTargetInfluences[index] = 0;
+        }
+      }
+      if (Object.keys(morphs).length) {
+        this.visemeMeshes.push({ mesh: o, morphs });
       }
       const idx = o.morphTargetDictionary.MouthOpen
         ?? o.morphTargetDictionary.MouthClosed;
@@ -580,9 +754,13 @@ export class Stage {
     // consonant suppresses the opening. This keeps the lips from puckering as
     // one solid circle while the jaw appears frozen.
     const openness = {
-      BMP: 0.04,
-      EE: 0.95,
-      OO: 1,
+      BMP: 0.015,
+      FV: 0.20,
+      LTH: 0.38,
+      SZ: 0.28,
+      UW: 0.58,
+      EE: 0.62,
+      OO: 0.78,
       AA: 1,
       neutral: 0,
     }[this.controller.viseme] ?? 0.92;
@@ -613,15 +791,21 @@ export class Stage {
     for (const { mesh, idx } of this.mouthMeshes) {
       mesh.morphTargetInfluences[idx] = w;
     }
-    // The exported EE/OO morphs deform the complete overlay into a second,
-    // circular mouth. Keep them explicitly disabled: the three authored mouth
-    // bones provide one clean open/close motion and the audio still controls
-    // its timing and strength.
-    const eeWeight = 0;
-    const ooWeight = 0;
-    for (const { mesh, ee, oo } of this.visemeMeshes ?? []) {
-      if (ee !== undefined) mesh.morphTargetInfluences[ee] = eeWeight;
-      if (oo !== undefined) mesh.morphTargetInfluences[oo] = ooWeight;
+    // Center-preserving Blender morphs shape the lips around the bone-driven
+    // opening. All targets are continuous, so transitions co-articulate rather
+    // than snapping from one phoneme pose to another.
+    const weights = this.controller.visemeWeights ?? {};
+    const expressionWeights = !this.controller.speaking ? ({
+      happy: { EE: 0.10 },
+      thoughtful: { UW: 0.035 },
+      surprised: { AA: 0.05 },
+      sad: { BMP: 0.04 },
+    }[this.controller.emotion] ?? {}) : {};
+    for (const { mesh, morphs } of this.visemeMeshes ?? []) {
+      for (const [name, index] of Object.entries(morphs)) {
+        const combined = Math.max(weights[name] ?? 0, expressionWeights[name] ?? 0);
+        mesh.morphTargetInfluences[index] = combined * (VISEME_STRENGTH[name] ?? 0.65);
+      }
     }
 
     // The Blender export has no MouthOpen morph: speech is a small compound
@@ -707,7 +891,8 @@ export class Stage {
     };
 
     const out = { ...base };
-    for (const layer of [automatic, semantic]) {
+    const expression = EMOTION_POSE[c.emotion] ?? {};
+    for (const layer of [automatic, expression, semantic]) {
       for (const key of Object.keys(layer)) {
         const v = layer[key];
         const prior = out[key] ?? (Array.isArray(v) ? [0, 0, 0] : 0);
@@ -898,6 +1083,8 @@ export class Stage {
     else if (this.staticModel) this.applyToStatic(t);
     else if (this.placeholder) this.applyToPlaceholder(pose);
 
+    this.updateCamera(t, dt);
+    this.updateRiggedFaceControls();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -913,6 +1100,10 @@ export class Stage {
   dispose() {
     window.removeEventListener('resize', this._onResize);
     this.renderer.setAnimationLoop(null);
+    this.clearFaceControls();
+    this.backdrop?.geometry.dispose();
+    this.backdrop?.material.map?.dispose();
+    this.backdrop?.material.dispose();
     this.renderer.dispose();
   }
 }

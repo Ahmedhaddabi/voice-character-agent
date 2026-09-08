@@ -3,10 +3,13 @@
 
 export const EMOTIONS = ['neutral', 'happy', 'curious', 'thoughtful', 'surprised', 'sad'];
 export const GESTURES = ['wave', 'nod', 'point', 'celebrate'];
+export const VISEMES = ['AA', 'EE', 'OO', 'UW', 'FV', 'LTH', 'SZ', 'BMP'];
 
 const GESTURE_DURATION = { wave: 1.8, nod: 0.9, point: 1.35, celebrate: 1.55 };
 const SPEECH_PULSE_DURATION = 0.34;
-const BLINK_DURATION = 0.18;
+// A readable human blink: about 115 ms closing, a brief closed hold, then a
+// softer 180 ms opening. The old 180 ms total blink looked like a flicker.
+const BLINK_DURATION = 0.36;
 
 function smooth01(value) {
   const x = Math.max(0, Math.min(1, value));
@@ -19,6 +22,7 @@ export class CharacterController {
     this.viseme = 'neutral';
     this.visemeEE = 0;
     this.visemeOO = 0;
+    this.visemeWeights = Object.fromEntries(VISEMES.map((name) => [name, 0]));
     this.emotion = 'neutral';
     this.gesture = null;
     this.gestureAge = 0;
@@ -71,8 +75,13 @@ export class CharacterController {
     this._emit();
   }
 
+  blinkNow() {
+    this._blinkAge = 0;
+    this._nextBlink = 2.5 + Math.random() * 2.5;
+  }
+
   // Called once per animation frame. Besides mouth amplitude, the sample may
-  // contain continuous EE/OO weights estimated from the outgoing audio.
+  // contain continuous authored-viseme weights estimated from outgoing audio.
   // Strong rising syllables also create short presentation beats, so hand and
   // head emphasis lands on speech instead of wandering on a timer.
   pushAmplitude(sample, dt) {
@@ -85,9 +94,19 @@ export class CharacterController {
     this.viseme = data.viseme ?? (level > 0.04 ? 'AA' : 'neutral');
     const ee = Math.max(0, Math.min(1, Number(data.ee) || 0));
     const oo = Math.max(0, Math.min(1, Number(data.oo) || 0));
-    const visemeAlpha = 1 - Math.exp(-Math.max(0.001, dt) * 24);
-    this.visemeEE += (ee - this.visemeEE) * visemeAlpha;
-    this.visemeOO += (oo - this.visemeOO) * visemeAlpha;
+    const supplied = data.weights ?? {};
+    const visemeAlpha = 1 - Math.exp(-Math.max(0.001, dt) * 28);
+    for (const name of VISEMES) {
+      let target = Number(supplied[name]);
+      if (!Number.isFinite(target)) target = this.viseme === name ? 1 : 0;
+      if (name === 'EE') target = Math.max(target, ee);
+      if (name === 'OO') target = Math.max(target, oo);
+      target = Math.max(0, Math.min(1, target));
+      this.visemeWeights[name] += (target - this.visemeWeights[name]) * visemeAlpha;
+    }
+    // Retain these aliases for the VRM expression path.
+    this.visemeEE = this.visemeWeights.EE;
+    this.visemeOO = Math.max(this.visemeWeights.OO, this.visemeWeights.UW * 0.9);
 
     if (level > 0.075) this._speechHangover = 0.12;
     else this._speechHangover = Math.max(0, this._speechHangover - dt);
@@ -118,6 +137,7 @@ export class CharacterController {
     this.viseme = 'neutral';
     this.visemeEE = 0;
     this.visemeOO = 0;
+    for (const name of VISEMES) this.visemeWeights[name] = 0;
     this.speechEnergy = 0;
     this.speechPulse = 0;
     this._speechPulseAge = Infinity;
@@ -161,10 +181,12 @@ export class CharacterController {
       if (p >= 1) {
         this.blink = 0;
         this._blinkAge = Infinity;
-      } else if (p < 0.38) {
-        this.blink = smooth01(p / 0.38);
+      } else if (p < 0.32) {
+        this.blink = smooth01(p / 0.32);
+      } else if (p < 0.50) {
+        this.blink = 1;
       } else {
-        this.blink = 1 - smooth01((p - 0.38) / 0.62);
+        this.blink = 1 - smooth01((p - 0.50) / 0.50);
       }
     }
   }

@@ -175,6 +175,50 @@ body {
 
 .chip:hover { border-color: var(--brass); color: var(--brass); }
 
+.lip-debug__row,
+.lip-debug__values {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lip-debug__state {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lip-debug__state.is-ready { color: var(--teal); }
+
+.lip-debug__meter {
+  height: 5px;
+  margin: 10px 0;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.lip-debug__meter i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--brass);
+  transform-origin: left center;
+  transition: transform 80ms linear;
+}
+
+.lip-debug__values {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lip-debug__values strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
 .controls { display: flex; gap: 10px; justify-content: center; }
 
 .btn {
